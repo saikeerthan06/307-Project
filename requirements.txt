@@ -1,0 +1,8 @@
+tensorflow
+keras
+xgboost
+scikit-learn
+pandas
+numpy 
+plotly
+lightgbm
