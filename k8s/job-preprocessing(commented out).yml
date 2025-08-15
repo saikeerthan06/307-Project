@@ -1,0 +1,33 @@
+# apiVersion: batch/v1
+# kind: Job
+# metadata:
+#   name: preproc-run
+#   namespace: hospital-ml
+#   labels: { app: data-preprocessing }
+# spec:
+#   backoffLimit: 0
+#   template:
+#     metadata: { labels: { app: data-preprocessing } }
+#     spec:
+#       restartPolicy: Never
+#       securityContext:
+#         runAsNonRoot: true
+#         runAsUser: 10001
+#       containers:
+#       - name: preproc
+#         image: yourdockerhub/model-training:v1
+#         imagePullPolicy: IfNotPresent
+#         command: ["python","data_preprocessing/preprocessing.py",
+#                   "--input_path","shared/data/diabetes_dataset00.csv",
+#                   "--output_dir","shared/clean",
+#                   "--target","Target",
+#                   "--label_encode_target","true",
+#                   "--save_csv","true",
+#                   "--save_report","true"]
+#         volumeMounts:
+#           - name: shared
+#             mountPath: /app/shared
+#       volumes:
+#         - name: shared
+#           persistentVolumeClaim:
+#             claimName: model-training-pvc

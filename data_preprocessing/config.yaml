@@ -1,0 +1,11 @@
+input_path: "dataset/diabetes_dataset00.csv"
+output_dir: "dataset/clean"
+target: "Target"
+drop_age_zero: true
+iqr: { enabled: true, k: 1.5 }
+encode: { label_encode_target: false }
+scaling: "standard"
+save:
+  csv: false
+  xlsx: true
+  report_json: true

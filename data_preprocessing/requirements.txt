@@ -1,0 +1,11 @@
+# pandas
+# pyyaml
+# scikit-learn
+# openpyxl
+# numpy
+flask
+pandas
+numpy
+scikit-learn
+openpyxl
+pyyaml

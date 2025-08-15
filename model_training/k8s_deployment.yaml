@@ -1,0 +1,114 @@
+# # DEV-ONLY MANIFEST FOR MODEL TRAINING
+# # This file is intended for local/dev testing of the model-training service.
+# # Do NOT apply this file in the same namespace alongside k8s/03-deployment-service.yaml.
+# # The canonical (production) manifests live under the root k8s/ folder.
+
+# # apiVersion: apps/v1
+# # kind: Deployment
+# # metadata:
+# #   name: model-training
+# #   labels:
+# #     app: model-training
+# # spec:
+# #   replicas: 1
+# #   selector:
+# #     matchLabels:
+# #       app: model-training
+# #   template:
+# #     metadata:
+# #       labels:
+# #         app: model-training
+# #     spec:
+# #       containers:
+# #       - name: model-training
+# #         image: yourdockerhub/model-training:latest
+# #         imagePullPolicy: Always
+# #         resources:
+# #           requests:
+# #             memory: "1Gi"
+# #             cpu: "500m"
+# #           limits:
+# #             memory: "2Gi"
+# #             cpu: "1"
+# #         volumeMounts:
+# #         - name: shared-data
+# #           mountPath: /mnt/data   # where datasets live in container
+# #         - name: model-out
+# #           mountPath: /mnt/models # where trained models are saved
+# #         env:
+# #         - name: PYTHONUNBUFFERED
+# #           value: "1"   # Ensures logs are shown immediately
+# #       restartPolicy: OnFailure
+# #       volumes:
+# #       - name: shared-data
+# #         persistentVolumeClaim:
+# #           claimName: shared-data-pvc   # must be defined elsewhere in cluster
+# #       - name: model-out
+# #         persistentVolumeClaim:
+# #           claimName: model-out-pvc     # must be defined elsewhere in cluster
+
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: model-training-dev
+#   labels: { app: model-training }
+#   annotations:
+#     kubernetes.io/change-cause: "dev-only manifest"
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels: { app: model-training }
+#   template:
+#     metadata:
+#       labels: { app: model-training }
+#     spec:
+#       securityContext:
+#         runAsNonRoot: true
+#         runAsUser: 10001
+#       containers:
+#       - name: model-training
+#         image: yourdockerhub/model-training:v1
+#         imagePullPolicy: IfNotPresent
+#         ports:
+#           - containerPort: 8000
+#         env:
+#           - name: MODEL_DIR
+#             value: "shared/models"
+#           - name: PREP_OUTPUT_DIR
+#             value: "shared/clean"
+#           - name: PREP_TARGET
+#             value: "Target"
+#           - name: PREP_SAVE_CSV
+#             value: "true"
+#           - name: PREP_LABEL_ENCODE_TARGET
+#             value: "true"
+#         volumeMounts:
+#           - name: shared
+#             mountPath: /app/shared
+#         readinessProbe:
+#           httpGet: { path: /healthz, port: 8000 }
+#           initialDelaySeconds: 5
+#           periodSeconds: 5
+#         livenessProbe:
+#           httpGet: { path: /healthz, port: 8000 }
+#           initialDelaySeconds: 15
+#           periodSeconds: 10
+#         resources:
+#           requests: { cpu: "500m", memory: "1Gi" }
+#           limits:   { cpu: "1",    memory: "2Gi" }
+#       volumes:
+#         - name: shared
+#           persistentVolumeClaim:
+#             claimName: model-training-pvc
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: model-training-svc-dev
+#   labels: { app: model-training }
+# spec:
+#   selector: { app: model-training }
+#   ports:
+#     - name: http
+#       port: 8000
+#       targetPort: 8000

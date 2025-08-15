@@ -1,0 +1,39 @@
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: inference-deployment
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: inference
+#   template:
+#     metadata:
+#       labels:
+#         app: inference
+#     spec:
+#       containers:
+#         - name: inference
+#           image: yourdockerhub/model-inference:latest
+#           ports:
+#             - containerPort: 8000
+#           volumeMounts:
+#             - name: shared-volume
+#               mountPath: /shared/models
+#       volumes:
+#         - name: shared-volume
+#           persistentVolumeClaim:
+#             claimName: shared-pvc
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: inference-service
+# spec:
+#   selector:
+#     app: inference
+#   type: NodePort
+#   ports:
+#     - port: 8000
+#       targetPort: 8000
+#       nodePort: 30080

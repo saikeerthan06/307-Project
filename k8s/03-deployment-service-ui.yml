@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: hospital-ml
+  labels: { app: ui }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: ui } }
+  template:
+    metadata: { labels: { app: ui } }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+      - name: ui
+        image: yourdockerhub/ui:v1
+        imagePullPolicy: IfNotPresent
+        ports: [{ containerPort: 8501 }]
+        env:
+          - name: TRAINING_URL
+            value: "http://model-training-svc:8000"
+          - name: INFERENCE_URL
+            value: "http://model-inference-svc:8000"
+          - name: TRAIN_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: model-training-secret
+                key: TRAIN_AUTH_TOKEN
+        readinessProbe:
+          tcpSocket: { port: 8501 }
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket: { port: 8501 }
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests: { cpu: "200m", memory: "256Mi" }
+          limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui-svc
+  namespace: hospital-ml
+  labels: { app: ui }
+spec:
+  selector: { app: ui }
+  ports:
+    - name: http
+      port: 8501
+      targetPort: 8501
+  type: ClusterIP

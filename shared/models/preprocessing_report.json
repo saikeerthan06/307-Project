@@ -1,0 +1,140 @@
+{
+  "rows_before": 70000,
+  "rows_after": 64076,
+  "age_zero_rows_removed": 2655,
+  "iqr_report": {
+    "rows_flagged_any_numeric": 3269,
+    "rows_kept": 64076,
+    "rows_before": 67345,
+    "per_column_bounds": {
+      "Insulin Levels": {
+        "lower": -8.5,
+        "upper": 51.5,
+        "removed": 0
+      },
+      "Age": {
+        "lower": -37.5,
+        "upper": 102.5,
+        "removed": 0
+      },
+      "BMI": {
+        "lower": 9.0,
+        "upper": 41.0,
+        "removed": 0
+      },
+      "Blood Pressure": {
+        "lower": 63.5,
+        "upper": 163.5,
+        "removed": 557
+      },
+      "Cholesterol Levels": {
+        "lower": 73.5,
+        "upper": 317.5,
+        "removed": 0
+      },
+      "Waist Circumference": {
+        "lower": 19.0,
+        "upper": 51.0,
+        "removed": 763
+      },
+      "Blood Glucose Levels": {
+        "lower": 6.0,
+        "upper": 310.0,
+        "removed": 0
+      },
+      "Weight Gain During Pregnancy": {
+        "lower": -14.5,
+        "upper": 45.5,
+        "removed": 0
+      },
+      "Pancreatic Health": {
+        "lower": -13.5,
+        "upper": 110.5,
+        "removed": 0
+      },
+      "Pulmonary Function": {
+        "lower": 41.5,
+        "upper": 101.5,
+        "removed": 1949
+      },
+      "Neurological Assessments": {
+        "lower": -0.5,
+        "upper": 3.5,
+        "removed": 0
+      },
+      "Digestive Enzyme Levels": {
+        "lower": -8.0,
+        "upper": 104.0,
+        "removed": 0
+      },
+      "Birth Weight": {
+        "lower": 1141.5,
+        "upper": 5201.5,
+        "removed": 0
+      }
+    }
+  },
+  "target_column": "Target",
+  "num_features_before_ohe": [
+    "Insulin Levels",
+    "Age",
+    "BMI",
+    "Blood Pressure",
+    "Cholesterol Levels",
+    "Waist Circumference",
+    "Blood Glucose Levels",
+    "Weight Gain During Pregnancy",
+    "Pancreatic Health",
+    "Pulmonary Function",
+    "Neurological Assessments",
+    "Digestive Enzyme Levels",
+    "Birth Weight"
+  ],
+  "cat_features_before_ohe": [
+    "Genetic Markers",
+    "Autoantibodies",
+    "Family History",
+    "Environmental Factors",
+    "Physical Activity",
+    "Dietary Habits",
+    "Ethnicity",
+    "Socioeconomic Factors",
+    "Smoking Status",
+    "Alcohol Consumption",
+    "Glucose Tolerance Test",
+    "History of PCOS",
+    "Previous Gestational Diabetes",
+    "Pregnancy History",
+    "Cystic Fibrosis Diagnosis",
+    "Steroid Use History",
+    "Genetic Testing",
+    "Liver Function Tests",
+    "Urine Test",
+    "Early Onset Symptoms"
+  ],
+  "feature_count_after_ohe": 58,
+  "scaling": "standard",
+  "label_encoder_on_target": {
+    "encoded": true,
+    "classes": [
+      "Cystic Fibrosis-Related Diabetes (CFRD)",
+      "Gestational Diabetes",
+      "LADA",
+      "MODY",
+      "Neonatal Diabetes Mellitus (NDM)",
+      "Prediabetic",
+      "Secondary Diabetes",
+      "Steroid-Induced Diabetes",
+      "Type 1 Diabetes",
+      "Type 2 Diabetes",
+      "Type 3c Diabetes (Pancreatogenic Diabetes)",
+      "Wolcott-Rallison Syndrome",
+      "Wolfram Syndrome"
+    ]
+  },
+  "outputs": {
+    "feature_names_json": "shared/clean/diabetes_dataset00_clean_feature_names.json",
+    "X_csv": "shared/clean/diabetes_dataset00_clean_X.csv",
+    "y_csv": "shared/clean/diabetes_dataset00_clean_y.csv"
+  }
+}

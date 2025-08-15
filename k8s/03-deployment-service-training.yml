@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-training
+  namespace: hospital-ml
+  labels: { app: model-training }
+  annotations:
+    kubernetes.io/change-cause: "initial rollout v1"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app: model-training }
+  template:
+    metadata:
+      labels: { app: model-training }
+    spec:
+      serviceAccountName: model-training-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+      - name: model-training
+        image: yourdockerhub/model-training:v1
+        imagePullPolicy: IfNotPresent
+        ports:
+          - containerPort: 8000
+        envFrom:
+          - configMapRef: { name: model-training-config }
+          - secretRef:    { name: model-training-secret }
+        volumeMounts:
+          - name: shared
+            mountPath: /app/shared
+        readinessProbe:
+          httpGet: { path: /healthz, port: 8000 }
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: { path: /healthz, port: 8000 }
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests: { cpu: "500m", memory: "1Gi" }
+          limits:   { cpu: "1",    memory: "2Gi" }
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: model-training-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-training-svc
+  namespace: hospital-ml
+  labels: { app: model-training }
+spec:
+  selector: { app: model-training }
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

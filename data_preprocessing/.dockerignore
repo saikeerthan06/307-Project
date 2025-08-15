@@ -1,0 +1,14 @@
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore data folder (we mount it at runtime)
+data/
+
+# Ignore local notebooks
+*.ipynb
+
+# Ignore OS/system files
+.DS_Store
+Thumbs.db
