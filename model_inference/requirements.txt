@@ -1,5 +1,7 @@
-pandas
-numpy
-scikit-learn
-joblib
 flask
+numpy
+pandas
+scipy
+scikit-learn
+xgboost
+joblib
