@@ -1,3 +1,10 @@
-streamlit 
-pandas
-request
+# streamlit 
+# pandas
+# request
+# requirements.txt
+streamlit==1.36.*
+pandas==2.*
+requests==2.*
+joblib==1.*
+# if you load sklearn models with joblib, you’ll also need:
+scikit-learn==1.5.*
