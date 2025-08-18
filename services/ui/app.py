@@ -109,6 +109,21 @@ def service_health(url: str) -> bool:
     except Exception:
         return False
 
+def run_inference_csv(model_path: str, csv_path: str, top_k: int = 3) -> dict:
+    payload = {
+        "model_path": model_path,
+        "artifacts_dir": str(Path(MODEL_DIR) / "artifacts"),
+        "mode": "csv",
+        "data_path": csv_path,
+        "return_proba": True,
+        "top_k": int(top_k),
+        "save_predictions": True,
+    }
+    r = requests.post(f"{INFER_URL}/predict", json=payload, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
 def render_training_metrics(report: Dict[str, Any]):
     st.subheader("Training metrics")
     c1, c2, c3 = st.columns(3)
@@ -258,6 +273,35 @@ else:
     if not mt_ok:
         col_t2.warning("Model-training service not healthy.")
 
+# --- Section: Predict (Model Inference) ---
+st.header("4) Predict on a cleaned CSV")
+
+# Choose a model
+models = list_paths(MODEL_DIR, "*.joblib")
+model_choice = st.selectbox("Choose model (.joblib)", models, format_func=lambda p: p.name, key="inf_model")
+
+# Choose a cleaned CSV
+clean_files = list_paths(CLEAN_DIR, "*_clean.csv")
+csv_choice = st.selectbox("Choose cleaned CSV", clean_files, format_func=lambda p: p.name, key="inf_csv")
+
+top_k = st.slider("Top-K probabilities to return", min_value=1, max_value=5, value=3)
+
+inf_col1, inf_col2 = st.columns([3, 2])
+if model_choice and csv_choice and inf_col1.button("Run inference", use_container_width=True):
+    try:
+        with st.spinner("Running model inference..."):
+            resp = run_inference_csv(str(model_choice), str(csv_choice), top_k=top_k)
+        # ✅ clear, visible completion text
+        st.success(f"Model inference complete! Predictions saved to: {resp.get('predictions_path')}")
+        # Show a tiny sample
+        sample = resp.get("sample", [])
+        if sample:
+            st.caption("Sample predictions")
+            st.dataframe(pd.DataFrame(sample), use_container_width=True)
+    except Exception as e:
+        st.error(f"Inference error: {e}")
+
+
 # --- Section: Artifacts (download from PVC) ---
 st.header("4) Artifacts")
 cA, cB, cC = st.columns(3)
@@ -322,5 +366,26 @@ with cC:
                     )
     except Exception as e:
         st.warning(f"Could not list artifacts: {e}")
+
+pred_dir = Path(MODEL_DIR) / "artifacts" / "predictions"
+st.subheader("Predictions (CSV)")
+try:
+    preds = list_paths(str(pred_dir), "*.csv")
+    if not preds:
+        st.write("No predictions saved yet.")
+    else:
+        sel_pred = st.selectbox("Choose predictions file", preds, format_func=lambda p: p.name, key="dl_preds")
+        if sel_pred and sel_pred.exists():
+            with open(sel_pred, "rb") as f:
+                st.download_button(
+                    "Download predictions CSV",
+                    data=f.read(),
+                    file_name=sel_pred.name,
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+except Exception as e:
+    st.warning(f"Could not list predictions: {e}")
+
 
 st.caption("Note: files live inside the cluster PVC; use the download buttons to save locally.")
