@@ -1,10 +1,21 @@
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: model-data-pvc
+#   namespace: hospital-ml
+# spec:
+#   accessModes: ["ReadWriteOnce"]
+#   resources:
+#     requests:
+#       storage: 10Gi
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: model-data-pvc
+  name: shared-pvc
   namespace: hospital-ml
 spec:
-  accessModes: ["ReadWriteOnce"]
+  accessModes:
+    - ReadWriteMany        # change to ReadWriteOnce if your storage class doesn’t support RWX
   resources:
     requests:
-      storage: 10Gi
+      storage: 5Gi

@@ -20,21 +20,21 @@ spec:
             runAsNonRoot: true
             runAsUser: 10001
           containers:
-          - name: train
-            image: yourdockerhub/model-training:v1
-            imagePullPolicy: IfNotPresent
-            command: ["python","model_training/app.py","--mode","train",
-                      "--input_path","shared/data/diabetes_dataset00.csv",
-                      "--prep_output_dir","shared/clean",
-                      "--model_dir","shared/models",
-                      "--target","Target","--label_encode_target","true"]
-            envFrom:
-              - configMapRef: { name: model-training-config }
-              - secretRef:    { name: model-training-secret }
-            volumeMounts:
-              - name: shared
-                mountPath: /app/shared
+            - name: train
+              image: saikeerthan06/model-training:<your-tag>      # <-- your real image/tag
+              imagePullPolicy: Always
+              command: ["python","model_training/app.py","--mode","train",
+                        "--input_path","/shared/data/diabetes_dataset00.csv",
+                        "--prep_output_dir","/shared/clean",
+                        "--model_dir","/shared/models",
+                        "--target","Target","--label_encode_target","true"]
+              envFrom:
+                - configMapRef: { name: model-training-config }
+                - secretRef:    { name: model-training-secret }
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
           volumes:
             - name: shared
               persistentVolumeClaim:
-                claimName: model-training-pvc
+                claimName: shared-pvc

@@ -13,31 +13,47 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
+        fsGroup: 10001                   # ensure mounted volume is writable
+      initContainers:
+        - name: init-shared
+          image: busybox:1.36
+          securityContext:
+            runAsUser: 0
+          command: ["sh","-c","mkdir -p /shared/data/raw /shared/data/clean && chown -R 10001:10001 /shared"]
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
       containers:
       - name: data-preprocessing
-        # You can build a dedicated image (recommended) or reuse training image (it already contains preprocessing.py)
-        image: yourdockerhub/data-preprocessing:v1
-        imagePullPolicy: IfNotPresent
-        ports: [{ containerPort: 8000 }]
+        image: saikeerthan06/data-preprocessing:2.1.1
+        imagePullPolicy: Always
+        workingDir: /app
         env:
+          - name: PYTHONPATH
+            value: "/app"
           - name: PREP_OUTPUT_DIR
-            value: "shared/clean"
+            value: "/shared/data/clean"      # <-- leading slash
           - name: PREP_TARGET
             value: "Target"
           - name: PREP_SAVE_CSV
             value: "true"
           - name: PREP_LABEL_ENCODE_TARGET
             value: "true"
+        command: ["python"]
+        args: ["-u", "data_preprocessing/service.py"]
+        ports: [{ containerPort: 8000 }]
         volumeMounts:
           - name: shared
-            mountPath: /app/shared
+            mountPath: /shared           # <-- match your code path
         readinessProbe:
           httpGet: { path: /healthz, port: 8000 }
-          initialDelaySeconds: 5
-          periodSeconds: 5
+          initialDelaySeconds: 3
+          periodSeconds: 3
+          timeoutSeconds: 1
+          failureThreshold: 10
         livenessProbe:
           httpGet: { path: /healthz, port: 8000 }
-          initialDelaySeconds: 15
+          initialDelaySeconds: 10
           periodSeconds: 10
         resources:
           requests: { cpu: "200m", memory: "256Mi" }
@@ -45,7 +61,7 @@ spec:
       volumes:
         - name: shared
           persistentVolumeClaim:
-            claimName: model-training-pvc
+            claimName: shared-pvc        # <-- use the PVC you actually created
 ---
 apiVersion: v1
 kind: Service

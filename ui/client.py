@@ -1,9 +1,10 @@
 # ui/client.py
 import os, time, requests
 
-PREPROC_URL = os.getenv("PREPROC_URL", "http://data-preprocessing:8000")
-TRAIN_URL   = os.getenv("TRAIN_URL",   "http://model-training:8000")
-INFER_URL   = os.getenv("INFER_URL",   "http://model-inference:8000")
+# Default to ClusterIP Service names (override via env in the UI Deployment if needed)
+PREPROC_URL = os.getenv("PREPROC_URL", "http://data-preprocessing-svc:8000")
+TRAIN_URL   = os.getenv("TRAIN_URL",   "http://model-training-svc:8000")
+INFER_URL   = os.getenv("INFER_URL",   "http://model-inference-svc:8000")
 
 RAW_DIR   = os.getenv("RAW_DIR",   "/shared/data/raw")
 CLEAN_DIR = os.getenv("CLEAN_DIR", "/shared/data/clean")

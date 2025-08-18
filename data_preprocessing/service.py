@@ -1,7 +1,7 @@
 # service.py
 import os, uuid, traceback
 from flask import Flask, request, jsonify
-from preprocessing import preprocess
+from data_preprocessing.preprocessing import preprocess
 
 app = Flask(__name__)
 
