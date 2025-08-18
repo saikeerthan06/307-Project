@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: hospital-ml
+  labels:
+    app: ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ui
+  template:
+    metadata:
+      labels:
+        app: ui
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      initContainers:
+        - name: init-shared
+          image: busybox:1.36
+          securityContext:
+            runAsUser: 0
+          command: ["sh","-c","mkdir -p /shared/data/raw /shared/data/clean && chown -R 10001:10001 /shared"]
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      containers:
+        - name: ui
+          image: saikeerthan06/ui:2.2.0
+          imagePullPolicy: Always
+          args:
+            - streamlit
+            - run
+            - ui/app.py
+            - --server.port=8501
+            - --server.address=0.0.0.0
+            - --browser.gatherUsageStats=false
+          env:
+            - name: RAW_DIR
+              value: "/shared/data"
+            - name: CLEAN_DIR
+              value: "/shared/data/clean"
+            - name: PREPROC_URL
+              value: "http://data-preprocessing-svc:8000"
+            - name: TRAIN_URL
+              value: "http://model-training-svc:8000"
+            - name: INFER_URL
+              value: "http://model-inference-svc:8000"
+          ports:
+            - containerPort: 8501
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: shared-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-preprocessing
+  namespace: hospital-ml
+  labels:
+    app: data-preprocessing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-preprocessing
+  template:
+    metadata:
+      labels:
+        app: data-preprocessing
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      initContainers:
+        - name: init-shared
+          image: busybox:1.36
+          securityContext:
+            runAsUser: 0
+          command: ["sh","-c","mkdir -p /shared/data /shared/data/raw /shared/data/clean && chown -R 10001:10001 /shared"]
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      containers:
+        - name: data-preprocessing
+          image: saikeerthan06/data-preprocessing:2.1.1
+          imagePullPolicy: Always
+          workingDir: /app
+          command: ["python"]
+          args: ["-u","data_preprocessing/service.py"]
+          env:
+            - name: PYTHONPATH
+              value: "/app"
+            - name: PREP_OUTPUT_DIR
+              value: "/shared/data/clean"
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: shared-pvc

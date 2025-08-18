@@ -1,0 +1,64 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ui-allow-ingress-and-egress
+  namespace: hospital-ml
+  labels:
+    app: ui
+    part-of: hospital-ml
+spec:
+  podSelector:
+    matchLabels:
+      app: ui
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from the NGINX Ingress controller to the UI
+    - from:
+        # Common label set (ingress-nginx helm chart)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+              app.kubernetes.io/component: controller
+        # Fallback for clusters that run controller in kube-system (older setups)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: nginx-ingress-controller
+      ports:
+        - protocol: TCP
+          port: 8501
+  egress:
+    # DNS lookups
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow calls to back-end services inside the same namespace
+    - to:
+        - podSelector:
+            matchLabels:
+              app: data-preprocessing
+        - podSelector:
+            matchLabels:
+              app: model-training
+        - podSelector:
+            matchLabels:
+              app: model-inference
+      ports:
+        - protocol: TCP
+          port: 8000

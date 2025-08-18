@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: hospital-ml
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: ui } }
+  template:
+    metadata:
+      labels: { app: ui }
+    spec:
+      containers:
+        - name: ui
+          image: saikeerthan06/ui:1.0.0
+          ports: [{ containerPort: 8501 }]
+          env:
+            - { name: PREPROC_URL, value: "http://data-preprocessing-svc:8000" }
+            - { name: TRAIN_URL,   value: "http://model-training-svc:8000" }
+            - { name: INFER_URL,   value: "http://model-inference-svc:8000" }
+            - { name: RAW_DIR,     value: "/shared/data/" }
+            - { name: CLEAN_DIR,   value: "/shared/clean" }
+            - { name: MODEL_DIR,   value: "/shared/models" }
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: shared-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: hospital-ml
+spec:
+  type: ClusterIP
+  selector: { app: ui }
+  ports:
+    - port: 80
+      targetPort: 8501
+---
+# Expose UI (adjust host/path as you like)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ui
+  namespace: hospital-ml
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ui.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ui
+                port:
+                  number: 80
