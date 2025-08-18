@@ -1,55 +1,65 @@
-# apiVersion: v1
-# kind: ConfigMap
-# metadata:
-#   name: preprocessing-config
-# data:
-#   config.yaml: |
-#     input_path: "/dataset/diabetes_dataset00.csv"
-#     output_dir: "/dataset/clean"
-#     target: "Target"
-#     drop_age_zero: true
-#     iqr: { enabled: true, k: 1.5 }
-#     encode: { label_encode_target: false }
-#     scaling: "standard"
-#     save:
-#       csv: true
-#       xlsx: true
-#       report_json: true
-
-# ---
-# apiVersion: apps/v1
-# kind: Deployment
-# metadata:
-#   name: preprocessing
-# spec:
-#   replicas: 1
-#   selector:
-#     matchLabels:
-#       app: preprocessing
-#   template:
-#     metadata:
-#       labels:
-#         app: preprocessing
-#     spec:
-#       containers:
-#         - name: preprocessing
-#           image: wxtiah/preprocessing:latest
-#           imagePullPolicy: IfNotPresent
-#           args: ["--config", "/config/config.yaml"]
-#           env:
-#             - name: PREP_SCALING
-#               value: "standard"
-#             - name: PREP_IQR_K
-#               value: "1.5"
-#           volumeMounts:
-#             - name: cfg
-#               mountPath: /config
-#             - name: data
-#               mountPath: /dataset   # <— matches config.yaml
-#       volumes:
-#         - name: cfg
-#           configMap:
-#             name: preprocessing-config
-#         - name: data
-#           persistentVolumeClaim:
-#             claimName: preprocessing-pvc
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-preprocessing
+  namespace: hospital-ml
+  labels: { app: data-preprocessing }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: data-preprocessing } }
+  template:
+    metadata: { labels: { app: data-preprocessing } }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+      - name: data-preprocessing
+        # You can build a dedicated image (recommended) or reuse training image (it already contains preprocessing.py)
+        image: yourdockerhub/data-preprocessing:v1
+        imagePullPolicy: IfNotPresent
+        ports: [{ containerPort: 8000 }]
+        env:
+          - name: PREP_INPUT_PATH
+            value: "/app/shared/uploads/diabetes_dataset00.csv"
+          - name: PREP_OUTPUT_DIR
+            value: "shared/clean"
+          - name: PREP_TARGET
+            value: "Target"
+          - name: PREP_SAVE_CSV
+            value: "true"
+          - name: PREP_LABEL_ENCODE_TARGET
+            value: "true"
+        volumeMounts:
+          - name: shared
+            mountPath: /app/shared
+        readinessProbe:
+          httpGet: { path: /healthz, port: 8000 }
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: { path: /healthz, port: 8000 }
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests: { cpu: "200m", memory: "256Mi" }
+          limits:   { cpu: "1",    memory: "1Gi" }
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: model-training-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-preprocessing-svc
+  namespace: hospital-ml
+  labels: { app: data-preprocessing }
+spec:
+  selector: { app: data-preprocessing }
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

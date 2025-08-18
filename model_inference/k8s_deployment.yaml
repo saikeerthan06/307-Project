@@ -1,39 +1,57 @@
-# apiVersion: apps/v1
-# kind: Deployment
-# metadata:
-#   name: inference-deployment
-# spec:
-#   replicas: 1
-#   selector:
-#     matchLabels:
-#       app: inference
-#   template:
-#     metadata:
-#       labels:
-#         app: inference
-#     spec:
-#       containers:
-#         - name: inference
-#           image: yourdockerhub/model-inference:latest
-#           ports:
-#             - containerPort: 8000
-#           volumeMounts:
-#             - name: shared-volume
-#               mountPath: /shared/models
-#       volumes:
-#         - name: shared-volume
-#           persistentVolumeClaim:
-#             claimName: shared-pvc
-# ---
-# apiVersion: v1
-# kind: Service
-# metadata:
-#   name: inference-service
-# spec:
-#   selector:
-#     app: inference
-#   type: NodePort
-#   ports:
-#     - port: 8000
-#       targetPort: 8000
-#       nodePort: 30080
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-inference
+  namespace: hospital-ml
+  labels: { app: model-inference }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: model-inference } }
+  template:
+    metadata: { labels: { app: model-inference } }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+      - name: model-inference
+        image: yourdockerhub/model-inference:v1
+        imagePullPolicy: IfNotPresent
+        ports: [{ containerPort: 8000 }]
+        env:
+          - name: MODEL_PATH
+            value: "shared/models/trained_model.pkl"
+          - name: FEATURE_NAMES_PATH
+            value: "shared/clean/diabetes_dataset00_clean_feature_names.json"
+        volumeMounts:
+          - name: shared
+            mountPath: /app/shared
+        readinessProbe:
+          httpGet: { path: /healthz, port: 8000 }
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: { path: /healthz, port: 8000 }
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests: { cpu: "200m", memory: "256Mi" }
+          limits:   { cpu: "1",    memory: "1Gi" }
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: model-training-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-inference-svc
+  namespace: hospital-ml
+  labels: { app: model-inference }
+spec:
+  selector: { app: model-inference }
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
