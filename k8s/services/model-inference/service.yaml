@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-inference-svc
+  namespace: hospital-ml
+  labels:
+    app: model-inference
+    tier: backend
+    part-of: hospital-ml
+spec:
+  type: ClusterIP
+  selector:
+    app: model-inference
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

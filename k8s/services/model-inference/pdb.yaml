@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: model-inference-pdb
+  namespace: hospital-ml
+  labels:
+    app: model-inference
+    part-of: hospital-ml
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: model-inference
