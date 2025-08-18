@@ -14,12 +14,14 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         fsGroup: 10001                   # ensure mounted volume is writable
+      terminationGracePeriodSeconds: 10
       initContainers:
         - name: init-shared
           image: busybox:1.36
           securityContext:
+            runAsNonRoot: false
             runAsUser: 0
-          command: ["sh","-c","mkdir -p /shared/data/raw /shared/data/clean && chown -R 10001:10001 /shared"]
+          command: ["sh","-c","mkdir -p /shared/data /shared/data/raw /shared/data/clean && chown -R 10001:10001 /shared"]
           volumeMounts:
             - name: shared
               mountPath: /shared

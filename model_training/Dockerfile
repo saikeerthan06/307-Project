@@ -18,10 +18,11 @@ WORKDIR /app
 # # Create the shared directory structure your app expects
 # RUN mkdir -p /app/shared/data /app/shared/clean /app/shared/models
 
-COPY model_training/requirements.txt .
+COPY requirements.txt ./
 
 RUN python -m pip install --no-cache-dir -r requirements.txt
-COPY model_training /app/model_training
+#COPY model_training /app/model_training
+COPY . /app
 RUN mkdir -p /app/shared
 
 # Non-root for better security (create user before chown)

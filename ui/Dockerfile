@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 ENV HOME=/app 
 RUN mkdir -p /app/.streamlit
-COPY ui/requirements.txt ./
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app

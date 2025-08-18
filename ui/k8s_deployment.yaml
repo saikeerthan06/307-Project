@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ui
+  namespace: hospital-ml
 spec:
   replicas: 1
   selector: { matchLabels: { app: ui } }
@@ -14,11 +15,11 @@ spec:
           image: saikeerthan06/ui:1.0.0
           ports: [{ containerPort: 8501 }]
           env:
-            - { name: PREPROC_URL, value: "http://data-preprocessing:8000" }
-            - { name: TRAIN_URL,   value: "http://model-training:8000" }
-            - { name: INFER_URL,   value: "http://model-inference:8000" }
-            - { name: RAW_DIR,     value: "/shared/data/raw" }
-            - { name: CLEAN_DIR,   value: "/shared/data/clean" }
+            - { name: PREPROC_URL, value: "http://data-preprocessing-svc:8000" }
+            - { name: TRAIN_URL,   value: "http://model-training-svc:8000" }
+            - { name: INFER_URL,   value: "http://model-inference-svc:8000" }
+            - { name: RAW_DIR,     value: "/shared/data/" }
+            - { name: CLEAN_DIR,   value: "/shared/clean" }
             - { name: MODEL_DIR,   value: "/shared/models" }
           volumeMounts:
             - name: shared
@@ -26,12 +27,13 @@ spec:
       volumes:
         - name: shared
           persistentVolumeClaim:
-            claimName: ml-data-pvc
+            claimName: shared-pvc
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: ui
+  namespace: hospital-ml
 spec:
   type: ClusterIP
   selector: { app: ui }
@@ -44,9 +46,9 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: ui
-  annotations:
-    kubernetes.io/ingress.class: "nginx"
+  namespace: hospital-ml
 spec:
+  ingressClassName: nginx
   rules:
     - host: ui.localtest.me
       http:
@@ -58,4 +60,3 @@ spec:
                 name: ui
                 port:
                   number: 80
-

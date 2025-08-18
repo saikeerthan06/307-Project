@@ -21,7 +21,7 @@ spec:
         runAsUser: 10001
       containers:
       - name: model-training
-        image: yourdockerhub/model-training:v1
+        image: saikeerthan06/model-training:v1
         imagePullPolicy: IfNotPresent
         ports:
           - containerPort: 8000

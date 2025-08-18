@@ -1,12 +1,14 @@
 # apiVersion: networking.k8s.io/v1
 # kind: NetworkPolicy
 # metadata:
-#   name: allow-ui-only
+#   name: allow-ui-to-backends
 #   namespace: hospital-ml
 # spec:
 #   podSelector:
-#     matchLabels:
-#       app: model-training
+#     matchExpressions:                 # allow multiple backends by label
+#       - key: app
+#         operator: In
+#         values: ["model-training","data-preprocessing","model-inference"]
 #   policyTypes: ["Ingress"]
 #   ingress:
 #   - from:
@@ -16,7 +18,6 @@
 #     ports:
 #     - protocol: TCP
 #       port: 8000
-
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -24,16 +25,43 @@ metadata:
   namespace: hospital-ml
 spec:
   podSelector:
-    matchExpressions:                 # allow multiple backends by label
-      - key: app
-        operator: In
-        values: ["model-training","data-preprocessing","model-inference"]
+    matchLabels:
+      app: data-preprocessing
   policyTypes: ["Ingress"]
   ingress:
-  - from:
-    - podSelector:
-        matchLabels:
-          app: ui
-    ports:
-    - protocol: TCP
-      port: 8000
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ui
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ui-to-training
+  namespace: hospital-ml
+spec:
+  podSelector:
+    matchLabels:
+      app: model-training
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ui
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ui-to-inference
+  namespace: hospital-ml
+spec:
+  podSelector:
+    matchLabels:
+      app: model-inference
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ui

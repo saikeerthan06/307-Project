@@ -1,3 +1,6 @@
 venv/
 307_venv/
 aiad_venv/
+docker_nuke.sh
+redeploy.sh
+reset_and_rebuild.sh

@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: model-inference
+  name: model-inference-svc
   namespace: hospital-ml
   labels: { app: model-inference }
 spec:
@@ -15,7 +15,7 @@ spec:
         runAsUser: 10001
       containers:
       - name: model-inference
-        image: yourdockerhub/model-inference:v1
+        image: saikeerthan06/model-inference:v1
         imagePullPolicy: IfNotPresent
         ports: [{ containerPort: 8000 }]
         env:
