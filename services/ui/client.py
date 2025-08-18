@@ -52,19 +52,48 @@ class BackendClient:
         raise TimeoutError(f"preprocess job {job_id} did not finish within {timeout_s}s")
 
     # --- Train ---
-    def start_train(self, data_path: str) -> str:
-        r = requests.post(f"{TRAIN_URL}/train", json={"data_path": data_path}, timeout=self.timeout)
-        r.raise_for_status()
-        return r.json()["job_id"]
+    def start_train(self, input_path: str, **overrides):
+        # MUST be an absolute path under CLEAN_DIR
+        if not input_path.startswith(CLEAN_DIR):
+            raise ValueError(f"input_path must be under {CLEAN_DIR}, got {input_path}")
 
-    def poll_train(self, job_id: str, poll_interval=3):
-        while True:
-            r = requests.get(f"{TRAIN_URL}/train/status", params={"job_id": job_id}, timeout=self.timeout)
+        payload = {
+            "input_path": input_path,
+            "target_column": "Target",
+            "test_size": 0.2,
+            "val_size": 0.2,
+            "random_state": 42,
+            "stratify": True,
+            "xgb_params": {
+                "n_estimators": 300,
+                "learning_rate": 0.05,
+                "max_depth": 6,
+                "subsample": 0.8,
+                "colsample_bytree": 0.8,
+                "n_jobs": 0,
+                "tree_method": "hist",
+                "objective": "multi:softprob"
+            },
+            "early_stopping_rounds": 20,
+            "persist_metrics": True
+        }
+        payload.update(overrides or {})
+
+        # IMPORTANT: send JSON, not form data
+        r = requests.post(f"{TRAIN_URL}/train", json=payload, timeout=self.timeout)
+        r.raise_for_status()
+        return r.json().get("job_id")
+
+    def poll_train(self, job_id: str, wait_s: float = 1.0, timeout_s: int = 1800):
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            r = requests.get(f"{TRAIN_URL}/train/{job_id}", timeout=self.timeout)
             r.raise_for_status()
-            payload = r.json()
-            if payload["state"] in ("succeeded", "failed"):
-                return payload
-            time.sleep(poll_interval)
+            js = r.json()
+            if js.get("state") in ("succeeded", "failed"):
+                return js
+            time.sleep(wait_s)
+        raise TimeoutError(f"train job {job_id} did not finish in {timeout_s}s")
 
     # --- Inference ---
     def predict(self, features: dict):

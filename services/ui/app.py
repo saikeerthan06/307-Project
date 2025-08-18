@@ -1,238 +1,326 @@
-# ui/app.py
-import os, io
-import pandas as pd
-import streamlit as st
-from client import BackendClient, RAW_DIR, CLEAN_DIR
+# services/ui/app.py
+import os
+import time
 from pathlib import Path
+from typing import Dict, Any, Optional
 
-# Default columns fallback (used when no CSV is uploaded yet)
-DEFAULT_COLUMNS = [
-    "Genetic Markers",
-    "Autoantibodies",
-    "Family History",
-    "Environmental Factors",
-    "Insulin Levels",
-    "Age",
-    "BMI",
-    "Physical Activity",
-    "Dietary Habits",
-    "Blood Pressure",
-    "Cholesterol Levels",
-    "Waist Circumference",
-    "Blood Glucose Levels",
-    "Ethnicity",
-    "Socioeconomic Factors",
-    "Smoking Status",
-    "Alcohol Consumption",
-    "Glucose Tolerance Test",
-    "History of PCOS",
-    "Previous Gestational Diabetes",
-    "Pregnancy History",
-    "Weight Gain During Pregnancy",
-    "Pancreatic Health",
-    "Pulmonary Function",
-    "Cystic Fibrosis Diagnosis",
-    "Steroid Use History",
-    "Genetic Testing",
-    "Neurological Assessments",
-    "Liver Function Tests",
-    "Digestive Enzyme Levels",
-    "Urine Test",
-    "Birth Weight",
-    "Early Onset Symptoms",
-]
+import streamlit as st
+import pandas as pd
+import requests
+
+# --- Env (must match your deployments) ---
+PREPROC_URL = os.getenv("PREPROC_URL", "http://data-preprocessing-svc:8000")
+TRAIN_URL   = os.getenv("TRAIN_URL",   "http://model-training-svc:8000")
+INFER_URL   = os.getenv("INFER_URL",   "http://model-inference-svc:8000")  # reserved for later
+
+RAW_DIR   = os.getenv("RAW_DIR",   "/shared/data/raw")
+CLEAN_DIR = os.getenv("CLEAN_DIR", "/shared/data/clean")
+MODEL_DIR = os.getenv("MODEL_DIR", "/shared/models")
+
+# --- Client wrapper (uses your client.py if present) ---
+try:
+    from client import BackendClient  # must implement start_preprocess, poll_preprocess, start_train, poll_train
+except Exception:
+    class BackendClient:
+        def __init__(self, timeout: int = 10):
+            self.timeout = timeout
+
+        # PREPROCESS
+        def start_preprocess(self, input_path: str, **overrides):
+            payload = {
+                "input_path": input_path,
+                "drop_duplicates": True,
+                "impute_numeric": False,
+                "impute_categorical": False,
+                "encode_target": True,
+                "encode_categorical": "mixed",
+                "scale_numeric": "robust",
+                "persist_artifacts": True,
+                "target_column": "Target",
+            }
+            payload.update(overrides or {})
+            r = requests.post(f"{PREPROC_URL}/preprocess", json=payload, timeout=self.timeout)
+            r.raise_for_status()
+            return r.json().get("job_id")
+
+        def poll_preprocess(self, job_id: str, wait_s: float = 0.8, timeout_s: int = 300):
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                r = requests.get(f"{PREPROC_URL}/preprocess/{job_id}", timeout=self.timeout)
+                r.raise_for_status()
+                js = r.json()
+                if js.get("state") in ("succeeded", "failed"):
+                    return js
+                time.sleep(wait_s)
+            raise TimeoutError(f"preprocess job {job_id} did not finish within {timeout_s}s")
+
+        # TRAIN
+        def start_train(self, input_path: str, **overrides):
+            payload = {
+                "input_path": input_path,
+                "target_column": "Target",
+                "test_size": 0.2,
+                "val_size": 0.2,
+                "random_state": 42,
+                "stratify": True,
+                "xgb_params": {
+                    "n_estimators": 300,
+                    "learning_rate": 0.05,
+                    "max_depth": 6,
+                    "subsample": 0.8,
+                    "colsample_bytree": 0.8,
+                    "n_jobs": 0,
+                    "tree_method": "hist",
+                    "objective": "multi:softprob",
+                },
+                "early_stopping_rounds": 20,   # ignored safely by our trainer
+                "persist_metrics": True,
+            }
+            payload.update(overrides or {})
+            r = requests.post(f"{TRAIN_URL}/train", json=payload, timeout=self.timeout)
+            r.raise_for_status()
+            return r.json().get("job_id")
+
+        def poll_train(self, job_id: str, wait_s: float = 1.0, timeout_s: int = 1800):
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                r = requests.get(f"{TRAIN_URL}/train/{job_id}", timeout=self.timeout)
+                r.raise_for_status()
+                js = r.json()
+                if js.get("state") in ("succeeded", "failed"):
+                    return js
+                time.sleep(wait_s)
+            raise TimeoutError(f"train job {job_id} did not finish in {timeout_s}s")
+
+
+client = BackendClient(timeout=20)
 
 # --- Helpers ---
-def load_schema_from_csv(path: str, max_unique_for_select: int = 30):
-    import pandas as _pd
-    try:
-        df = _pd.read_csv(path)
-    except Exception:
-        return []
-    schema = []
-    for col in df.columns:
-        # skip common target names
-        if str(col).strip().lower() in {"target", "label", "y"}:
-            continue
-        dtype = str(df[col].dtype)
-        if dtype.startswith("int") or dtype.startswith("float"):
-            # numeric input: use observed min/max for sensible bounds
-            try:
-                cmin = float(_pd.to_numeric(df[col], errors="coerce").min())
-                cmax = float(_pd.to_numeric(df[col], errors="coerce").max())
-            except Exception:
-                cmin, cmax = 0.0, 0.0
-            step = 1.0 if dtype.startswith("int") else 0.1
-            schema.append({"name": col, "kind": "number", "min": cmin, "max": cmax, "step": step})
-        else:
-            # categorical/text: prefer selectbox for small cardinality
-            uniques = (
-                df[col]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
-            )
-            uniques = sorted(uniques)
-            if 0 < len(uniques) <= max_unique_for_select:
-                schema.append({"name": col, "kind": "select", "options": uniques, "default": uniques[0] if uniques else ""})
-            else:
-                schema.append({"name": col, "kind": "text", "default": ""})
-    return schema
-
-st.set_page_config(page_title="EGT307 – ML UI", layout="wide")
-st.title("EGT307 – End‑to‑End ML (UI)")
-
-client = BackendClient()
-
-# --- Service health badges ---
-with st.sidebar:
-    st.header("Services")
-    health = client.healthy()
-    for k, v in health.items():
-        st.write(("✅ " if v else "❌ ") + k)
-
-st.markdown("### A) Upload & Preprocess")
-
-# Ensure shared dirs exist and show where we save
-try:
+def ensure_dirs():
     Path(RAW_DIR).mkdir(parents=True, exist_ok=True)
     Path(CLEAN_DIR).mkdir(parents=True, exist_ok=True)
-except Exception as _mkerr:
-    st.warning(f"Could not ensure shared dirs exist: {RAW_DIR}, {CLEAN_DIR} → {_mkerr}")
+    Path(MODEL_DIR).mkdir(parents=True, exist_ok=True)
+    (Path(MODEL_DIR)/"artifacts").mkdir(parents=True, exist_ok=True)
 
-st.caption(f"RAW_DIR: {RAW_DIR}  |  CLEAN_DIR: {CLEAN_DIR}")
-
-uploaded = st.file_uploader("Upload CSV", type=["csv"])
-raw_path = None
-
-# 1) If user uploads a CSV now, persist it to the shared RAW_DIR
-if uploaded is not None:
-    dest_path = Path(RAW_DIR) / uploaded.name
+def service_health(url: str) -> bool:
     try:
-        with open(dest_path, "wb") as f:
-            f.write(uploaded.getbuffer())
-        st.success(f"Saved to {dest_path}")
-        raw_path = str(dest_path)
-        st.session_state["raw_path"] = raw_path
-        # preview
-        try:
-            df_preview = pd.read_csv(dest_path).head(10)
-            st.dataframe(df_preview)
-            # store schema for manual prediction form
-            st.session_state["schema"] = load_schema_from_csv(str(dest_path))
-        except Exception as e:
-            st.warning(f"Preview failed: {e}")
-    except Exception as e:
-        st.error(f"Failed to save upload to {dest_path}: {e}")
-
-# 2) If nothing uploaded this run, allow choosing an existing CSV from RAW_DIR
-if raw_path is None:
-    try:
-        existing = sorted([p for p in Path(RAW_DIR).glob("*.csv")])
+        r = requests.get(f"{url}/healthz", timeout=3)
+        return r.ok
     except Exception:
-        existing = []
-    if existing:
-        default_idx = 0
-        # prefer previously used file from session if present
-        prev = st.session_state.get("raw_path")
-        if prev:
-            for i, p in enumerate(existing):
-                if str(p) == prev:
-                    default_idx = i
-                    break
-        choice = st.selectbox("Or pick an existing CSV from RAW_DIR", existing, index=default_idx, format_func=lambda p: p.name)
-        if choice:
-            raw_path = str(choice)
-            st.session_state["raw_path"] = raw_path
-            st.info(f"Selected: {raw_path}")
-            try:
-                df_preview = pd.read_csv(choice).head(10)
-                st.dataframe(df_preview)
-                st.session_state["schema"] = load_schema_from_csv(str(choice))
-            except Exception as e:
-                st.warning(f"Preview failed: {e}")
-    else:
-        st.info("No CSVs found in RAW_DIR yet. Upload one above.")
+        return False
 
-# 3) Kick off preprocessing using the resolved path (from upload or picker or session)
-resolved_raw_path = st.session_state.get("raw_path", raw_path)
+def render_training_metrics(report: Dict[str, Any]):
+    st.subheader("Training metrics")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Val accuracy", f"{report.get('val',{}).get('accuracy',0):.3f}")
+    c2.metric("Test accuracy", f"{report.get('test',{}).get('accuracy',0):.3f}")
+    c3.metric("Classes", int(report.get("num_classes", 0)))
 
-if st.button("Run Preprocessing", disabled=(not resolved_raw_path)):
-    if not resolved_raw_path:
-        st.error("No input file path found. Please upload or select a CSV in RAW_DIR.")
-    elif not Path(resolved_raw_path).exists():
-        st.error(f"File not found: {resolved_raw_path}. Make sure the UI saved it under RAW_DIR.")
-    else:
-        with st.spinner("Preprocessing..."):
-            job = client.start_preprocess(resolved_raw_path)
-            result = client.poll_preprocess(job)
-        if result.get("state") == "succeeded":
-            clean_path = result.get("output_path")
-            st.session_state["clean_path"] = clean_path
-            # refresh schema from cleaned dataset if available
-            if clean_path:
-                st.session_state["schema"] = load_schema_from_csv(clean_path)
-            st.success(f"Preprocess done → {clean_path}")
-        else:
-            st.error(f"Preprocess failed: {result}")
+    cr = report.get("classification_report")
+    cr_text = report.get("classification_report_text", "")
+    if cr:
+        st.caption("Classification report (test set)")
+        try:
+            df = pd.DataFrame(cr).T
+            st.dataframe(df, use_container_width=True)
+        except Exception:
+            st.text(cr_text)
+    cm = report.get("confusion_matrix")
+    if cm:
+        st.caption("Confusion matrix (test set)")
+        st.dataframe(pd.DataFrame(cm), use_container_width=True)
 
-st.markdown("---")
-st.markdown("### B) Train Model")
-clean_path = st.text_input("Cleaned data path", value=st.session_state.get("clean_path", ""))
-if st.button("Train", disabled=(not clean_path)):
-    with st.spinner("Training..."):
-        job = client.start_train(clean_path)
-        result = client.poll_train(job)
-    if result["state"] == "succeeded":
-        st.session_state["model_path"] = result.get("model_path", "")
-        st.success(f"Training complete. Model: {st.session_state['model_path']}")
-        metrics = result.get("metrics", {})
-        if metrics:
-            st.json(metrics)
-    else:
-        st.error(f"Training failed: {result}")
+def list_paths(dir_path: str, glob_pat: str) -> list[Path]:
+    p = Path(dir_path)
+    return sorted([x for x in p.glob(glob_pat) if x.is_file()])
 
-st.markdown("---")
-st.markdown("### C) Predict (Manual)")
+# --- UI state ---
+if "pp_job_id" not in st.session_state:
+    st.session_state.pp_job_id = None
+if "mt_job_id" not in st.session_state:
+    st.session_state.mt_job_id = None
+if "last_clean_path" not in st.session_state:
+    st.session_state.last_clean_path = None
+if "last_model_path" not in st.session_state:
+    st.session_state.last_model_path = None
 
-# Determine schema priority: cleaned path → uploaded raw → existing session
-schema = st.session_state.get("schema", [])
+# --- Layout ---
+st.set_page_config(page_title="Hospital ML – UI", layout="wide")
+st.title("🏥 Hospital ML – End-to-End (Kubernetes)")
 
-# If user typed a cleaned path manually later, try to (re)load schema lazily
-if not schema and st.session_state.get("clean_path"):
-    schema = load_schema_from_csv(st.session_state["clean_path"]) or []
-    st.session_state["schema"] = schema
+ensure_dirs()
 
-# If still empty, try raw path (from upload)
-if not schema and st.session_state.get("raw_path"):
-    schema = load_schema_from_csv(st.session_state["raw_path"]) or []
-    st.session_state["schema"] = schema
+with st.sidebar:
+    st.subheader("Services")
+    dp_ok = service_health(PREPROC_URL)
+    mt_ok = service_health(TRAIN_URL)
+    st.write(f"Preprocessing: {'🟢' if dp_ok else '🔴'}")
+    st.write(f"Model Training: {'🟢' if mt_ok else '🔴'}")
+    st.caption("Paths")
+    st.code(f"RAW_DIR   = {RAW_DIR}\nCLEAN_DIR = {CLEAN_DIR}\nMODEL_DIR = {MODEL_DIR}")
 
-# Final fallback: hardcoded default columns so fields are ALWAYS visible
-if not schema:
-    schema = [{"name": c, "kind": "text", "default": ""} for c in DEFAULT_COLUMNS]
-    st.session_state["schema"] = schema
+# --- Section: Upload & Preprocess ---
+st.header("1) Upload raw CSV and preprocess")
 
-with st.form("predict_form"):
-    features = {}
-    # Force TEXT INPUTS for every column (excluding target), as requested
-    for field in schema:
-        name = field.get("name") if isinstance(field, dict) else str(field)
-        # fall back to empty string as default
-        value = st.text_input(name, (field.get("default", "") if isinstance(field, dict) else ""))
-        features[name] = value
+uploaded = st.file_uploader("Upload a raw CSV", type=["csv"])
+col_u1, col_u2 = st.columns([3, 2])
 
-    submitted = st.form_submit_button("Predict")
+if uploaded is not None:
+    # Save into RAW_DIR
+    raw_path = Path(RAW_DIR) / uploaded.name
+    with open(raw_path, "wb") as f:
+        f.write(uploaded.getbuffer())
+    st.success(f"Uploaded to: {raw_path}")
 
-if submitted:
+    # Launch preprocess
+    if col_u1.button("Run preprocessing", use_container_width=True, disabled=not dp_ok):
+        try:
+            job = client.start_preprocess(str(raw_path))
+            st.session_state.pp_job_id = job
+            with st.spinner("Preprocessing..."):
+                res = client.poll_preprocess(job)
+            if res.get("state") == "succeeded":
+                out_path = res.get("output_path")
+                st.session_state.last_clean_path = out_path
+                st.success(f"Preprocessing complete! Clean CSV → {out_path}")
+                # Brief summary
+                report = res.get("report", {}) or {}
+                shape_b = report.get("shape_before", [])
+                shape_a = report.get("shape_after", [])
+                st.write(f"Rows/Cols before: {shape_b} → after: {shape_a}")
+            else:
+                st.error(f"Preprocess failed: {res.get('error')}")
+                if res.get("trace"):
+                    with st.expander("Traceback"):
+                        st.code(res["trace"])
+        except Exception as e:
+            st.error(f"Preprocess error: {e}")
+
+else:
+    col_u1.info("Upload a CSV to enable preprocessing.")
+    if not dp_ok:
+        col_u2.warning("Preprocessing service not healthy.")
+
+# --- Section: Choose a cleaned CSV (from PVC) ---
+st.header("2) Pick a cleaned CSV to train on")
+clean_files = list_paths(CLEAN_DIR, "*_clean.csv")
+if st.session_state.last_clean_path:
+    # Ensure its presence at top
+    lp = Path(st.session_state.last_clean_path)
+    if lp.exists() and lp not in clean_files:
+        clean_files = [lp] + clean_files
+
+if clean_files:
+    sel_clean = st.selectbox(
+        "Select a cleaned CSV",
+        options=clean_files,
+        index=0,
+        format_func=lambda p: p.name,
+        key="sel_clean",
+    )
+    # Preview
     try:
-        out = client.predict(features)
-        pred = out.get("prediction")
-        st.success(f"Prediction: {pred}")
-        st.caption(f"Model version: {out.get('model_version', 'unknown')}")
-        # Optionally echo the sent features for transparency
-        with st.expander("Sent features"):
-            st.json(features)
+        df_preview = pd.read_csv(sel_clean).head(10)
+        st.caption("Preview (first 10 rows)")
+        st.dataframe(df_preview, use_container_width=True)
     except Exception as e:
-        st.error(f"Prediction failed: {e}")
+        st.warning(f"Could not preview CSV: {e}")
+else:
+    st.info("No *_clean.csv found yet. Run preprocessing above.")
+
+# --- Section: Train ---
+st.header("3) Train XGBoost on the cleaned CSV")
+col_t1, col_t2 = st.columns([3, 2])
+
+if clean_files and col_t1.button("Start training", use_container_width=True, disabled=not mt_ok):
+    try:
+        job = client.start_train(str(st.session_state.sel_clean))
+        st.session_state.mt_job_id = job
+        with st.spinner("Training..."):
+            result = client.poll_train(job)
+        if result.get("state") == "succeeded":
+            st.success("Training complete!")
+            st.session_state.last_model_path = result.get("model_path")
+            # Metrics
+            render_training_metrics(result.get("report", {}) or {})
+            # Paths
+            st.caption(f"Model saved to: {result.get('model_path')}")
+            if result.get("report_path"):
+                st.caption(f"Report saved to: {result.get('report_path')}")
+        else:
+            st.error(f"Training failed: {result.get('error')}")
+            if result.get("trace"):
+                with st.expander("Traceback"):
+                    st.code(result["trace"])
+    except Exception as e:
+        st.error(f"Train error: {e}")
+else:
+    if not mt_ok:
+        col_t2.warning("Model-training service not healthy.")
+
+# --- Section: Artifacts (download from PVC) ---
+st.header("4) Artifacts")
+cA, cB, cC = st.columns(3)
+
+with cA:
+    st.subheader("Cleaned CSVs")
+    try:
+        clean_files = list_paths(CLEAN_DIR, "*.csv")
+        if not clean_files:
+            st.write("No files in CLEAN_DIR.")
+        else:
+            chosen = st.selectbox("Choose CSV", clean_files, format_func=lambda p: p.name, key="dl_csv")
+            if chosen and chosen.exists():
+                with open(chosen, "rb") as f:
+                    st.download_button(
+                        "Download CSV",
+                        data=f.read(),
+                        file_name=chosen.name,
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+    except Exception as e:
+        st.warning(f"Could not list CLEAN_DIR: {e}")
+
+with cB:
+    st.subheader("Models (.joblib)")
+    try:
+        models = list_paths(MODEL_DIR, "*.joblib")
+        if not models:
+            st.write("No models in MODEL_DIR.")
+        else:
+            chosen = st.selectbox("Choose model", models, format_func=lambda p: p.name, key="dl_model")
+            if chosen and chosen.exists():
+                with open(chosen, "rb") as f:
+                    st.download_button(
+                        "Download model",
+                        data=f.read(),
+                        file_name=chosen.name,
+                        mime="application/octet-stream",
+                        use_container_width=True,
+                    )
+    except Exception as e:
+        st.warning(f"Could not list MODEL_DIR: {e}")
+
+with cC:
+    st.subheader("Training reports")
+    artifacts_dir = Path(MODEL_DIR) / "artifacts"
+    try:
+        reports = list_paths(str(artifacts_dir), "training_report_*.json")
+        if not reports:
+            st.write("No training reports yet.")
+        else:
+            chosen = st.selectbox("Choose report", reports, format_func=lambda p: p.name, key="dl_report")
+            if chosen and chosen.exists():
+                with open(chosen, "rb") as f:
+                    st.download_button(
+                        "Download report",
+                        data=f.read(),
+                        file_name=chosen.name,
+                        mime="application/json",
+                        use_container_width=True,
+                    )
+    except Exception as e:
+        st.warning(f"Could not list artifacts: {e}")
+
+st.caption("Note: files live inside the cluster PVC; use the download buttons to save locally.")
