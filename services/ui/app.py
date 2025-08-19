@@ -29,6 +29,16 @@ if "cleaned_csv_path" not in st.session_state:
 if "model_ready" not in st.session_state:
     st.session_state.model_ready = False       # flip True after training succeeds
 
+# Sidebar controls: show/hide prior cleaned files & session reset
+if "show_prior_cleaned" not in st.session_state:
+    st.session_state.show_prior_cleaned = True  # default: list prior cleaned CSVs
+
+def reset_ui_session():
+    for k in ["uploaded_raw_path", "cleaned_csv_path", "model_ready", "model_path", "_preproc_state"]:
+        if k in st.session_state:
+            del st.session_state[k]
+    st.session_state.show_prior_cleaned = False  # after reset, hide old files until new preprocess
+
 # -------------- Client ---------------
 class BackendClient:
     def __init__(self, timeout:int=20): self.timeout = timeout
@@ -278,8 +288,18 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
     return schema
 
 # ---------------- Page ----------------
-st.set_page_config(page_title="Hospital ML – UI", layout="wide")
+st.set_page_config(page_title="Hospital ML – UI", layout="wide", initial_sidebar_state="expanded")
 st.title("🏥 Hospital ML – End-to-End (Kubernetes)")
+# Top-right quick reset (mirrors the sidebar button)
+cr1, cr2 = st.columns([6,1])
+with cr2:
+    st.button(
+        "Reset session",
+        on_click=reset_ui_session,
+        help="Clear UI state and hide previously discovered files until you preprocess again.",
+        use_container_width=True,
+        key="reset_top"
+    )
 ensure_dirs()
 
 with st.sidebar:
@@ -289,6 +309,19 @@ with st.sidebar:
     st.write(f"Inference:     {'🟢' if service_ok(INFER_URL) else '🔴'}")
     st.caption("Paths")
     st.code(f"RAW_DIR={RAW_DIR}\nCLEAN_DIR={CLEAN_DIR}\nMODEL_DIR={MODEL_DIR}")
+    st.divider()
+    st.subheader("Session controls")
+    st.checkbox(
+        "Show previous cleaned files",
+        key="show_prior_cleaned",
+        help="When off, Section 2 will not list old cleaned CSVs; only files produced in this session will be used.",
+    )
+    st.button(
+        "Reset UI session",
+        on_click=reset_ui_session,
+        help="Clear UI state and hide previously discovered files until you preprocess again.",
+        use_container_width=True,
+    )
 
 # --- 1) Upload & preprocess ---
 # --- 1) Upload raw CSV and preprocess ---
@@ -343,7 +376,7 @@ sel_clean: Optional[Path] = None
 if st.session_state.cleaned_csv_path:
     # Build choices but default to the file produced by the last preprocess
     default_path = Path(st.session_state.cleaned_csv_path)
-    clean_files = list_paths(CLEAN_DIR, "*_clean.csv")
+    clean_files = list_paths(CLEAN_DIR, "*_clean.csv") if st.session_state.get("show_prior_cleaned", True) else []
     # Ensure the default is in the options
     if default_path.exists() and default_path not in clean_files:
         clean_files = [default_path] + clean_files

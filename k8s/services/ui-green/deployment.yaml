@@ -26,7 +26,7 @@ spec:
           configMap: { name: ui-config }
       containers:
         - name: ui
-          image: ui:1.1.0   # start same image; change to new tag when demoing
+          image: ui:1.2.5   # start same image; change to new tag when demoing
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8501 }]
           envFrom: [{ configMapRef: { name: ui-config } }]
