@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ui-blue
+  namespace: hospital-ml
   labels: { app: ui, part-of: hospital-ml, tier: frontend, version: blue }
 spec:
   replicas: 1

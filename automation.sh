@@ -57,13 +57,22 @@ kubectl apply -n "${NAMESPACE}" -f k8s/base/ || true
 kubectl apply -n "${NAMESPACE}" -f k8s/services/data-preprocessing/
 kubectl apply -n "${NAMESPACE}" -f k8s/services/model-training/
 kubectl apply -n "${NAMESPACE}" -f k8s/services/model-inference/
-kubectl apply -n "${NAMESPACE}" -f k8s/services/ui/
+kubectl apply -n "${NAMESPACE}" -f k8s/services/ui/configmap.yaml
+kubectl apply -n "${NAMESPACE}" -f k8s/services/ui/service.yaml
+kubectl apply -n "${NAMESPACE}" -f k8s/services/ui/ingress.yaml
+kubectl apply -n "${NAMESPACE}" -f k8s/services/ui/networkpolicy.yaml
+kubectl apply -n "${NAMESPACE}" -f k8s/services/ui/pdb.yaml
+kubectl apply -n "${NAMESPACE}" -f k8s/services/ui-blue/
+kubectl apply -n "${NAMESPACE}" -f k8s/services/ui-green/
+kubectl apply -n "${NAMESPACE}" -f k8s/ops/
+kubectl apply -n "${NAMESPACE}" -f k8s/security/
 
 # ---- Set images
 kubectl -n "${NAMESPACE}" set image deploy/data-preprocessing api="${DP_IMAGE_TAG}" || true
 kubectl -n "${NAMESPACE}" set image deploy/model-training   api="${MT_IMAGE_TAG}" || true
 kubectl -n "${NAMESPACE}" set image deploy/model-inference  api="${MI_IMAGE_TAG}" || true
-kubectl -n "${NAMESPACE}" set image deploy/ui              ui="${UI_IMAGE_TAG}"  || true
+kubectl -n "${NAMESPACE}" set image deploy/ui-blue         ui="${UI_IMAGE_TAG}"  || true
+kubectl -n "${NAMESPACE}" set image deploy/ui-green        ui="${UI_IMAGE_TAG}"  || true
 
 # ---- One-off PVC perms (defensive)
 echo ">> Ensuring /shared perms (one-off)..."
@@ -89,7 +98,7 @@ kubectl -n "${NAMESPACE}" delete pod pvc-perm-fix --ignore-not-found >/dev/null 
 
 # ---- SecurityContext (pod + container) for all Deployments
 echo ">> Enforcing pod & container securityContext..."
-for DEP in data-preprocessing model-training model-inference ui; do
+for DEP in data-preprocessing model-training model-inference ui-blue ui-green; do
   # Pod-level (strategic patch; no --type flag)
   kubectl -n "${NAMESPACE}" patch deploy "${DEP}" -p '{
     "spec": { "template": { "spec": {
@@ -100,7 +109,7 @@ for DEP in data-preprocessing model-training model-inference ui; do
   }' || true
 
   # Container-level (ui container is "ui", others are "api")
-  CNAME="api"; [[ "${DEP}" == "ui" ]] && CNAME="ui"
+  CNAME="api"; [[ "${DEP}" == ui* ]] && CNAME="ui"
   kubectl -n "${NAMESPACE}" patch deploy "${DEP}" -p "{
     \"spec\": { \"template\": { \"spec\": {
       \"containers\": [ { \"name\": \"${CNAME}\", \"securityContext\": { \"runAsUser\": 1000, \"runAsGroup\": 1000 } } ]
@@ -111,16 +120,16 @@ done
 # ---- DEV mode: disable HPAs + Recreate + clean restart (no quoted args anywhere)
 if [[ "${DEV_MODE}" == "true" ]]; then
   echo ">> DEV_MODE=true: disabling HPAs and using Recreate + single replica"
-  kubectl -n "${NAMESPACE}" delete hpa data-preprocessing-hpa ui-hpa model-training-hpa model-inference-hpa --ignore-not-found
+  kubectl -n "${NAMESPACE}" delete hpa data-preprocessing-hpa model-training-hpa model-inference-hpa --ignore-not-found
 
   # Use Recreate (and null rollingUpdate to satisfy schema)
-  for DEP in data-preprocessing model-training model-inference ui; do
+  for DEP in data-preprocessing model-training model-inference ui-blue ui-green; do
     kubectl -n "${NAMESPACE}" patch deploy "${DEP}" -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' || true
     kubectl -n "${NAMESPACE}" patch deploy "${DEP}" -p '{"spec":{"template":{"spec":{"terminationGracePeriodSeconds":10}}}}' || true
   done
 
   # Hard restart each deployment cleanly: scale 0 → delete pods/RS → scale 1
-  for DEP in data-preprocessing model-training model-inference ui; do
+  for DEP in data-preprocessing model-training model-inference ui-blue ui-green; do
     echo ">> Recreate ${DEP}"
     kubectl -n "${NAMESPACE}" scale deploy/${DEP} --replicas=0 || true
     kubectl -n "${NAMESPACE}" wait --for=delete pod -l app=${DEP} --timeout=90s || true
@@ -134,7 +143,8 @@ echo ">> Waiting for rollouts..."
 kubectl -n "${NAMESPACE}" rollout status deploy/data-preprocessing --timeout=180s
 kubectl -n "${NAMESPACE}" rollout status deploy/model-training   --timeout=240s
 kubectl -n "${NAMESPACE}" rollout status deploy/model-inference  --timeout=180s
-kubectl -n "${NAMESPACE}" rollout status deploy/ui              --timeout=180s
+kubectl -n "${NAMESPACE}" rollout status deploy/ui-blue         --timeout=180s
+kubectl -n "${NAMESPACE}" rollout status deploy/ui-green        --timeout=180s
 
 # ---- Optional dataset copy to RAW
 if [[ -f "${DATASET_LOCAL_PATH}" ]]; then
