@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dp-allow-ui-and-dns
+  namespace: hospital-ml
+  labels:
+    app: data-preprocessing
+    part-of: hospital-ml
+spec:
+  podSelector:
+    matchLabels:
+      app: data-preprocessing
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only allow calls from the UI pods to the API port
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ui
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # Allow DNS lookups (if needed)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # (Optional) Allow intra-namespace traffic if you later chain services
+    # - to:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: hospital-ml

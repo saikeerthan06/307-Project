@@ -1,0 +1,46 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mt-allow-ui-and-dns
+  namespace: hospital-ml
+  labels:
+    app: model-training
+    part-of: hospital-ml
+spec:
+  podSelector:
+    matchLabels:
+      app: model-training
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow calls from the UI to /train and /healthz
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ui
+      ports:
+        - protocol: TCP
+          port: 8000
+    # (Optional) allow from a retrain CronJob if you label it app: retrain
+    - from:
+        - podSelector:
+            matchLabels:
+              app: retrain
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # DNS lookups
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

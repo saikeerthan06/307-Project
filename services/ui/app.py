@@ -1,0 +1,451 @@
+# services/ui/app.py
+import os, json, time
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
+import requests
+import streamlit as st
+import pandas as pd
+
+# ---------------- ENV ----------------
+PREPROC_URL = os.getenv("PREPROC_URL", "http://data-preprocessing-svc:8000")
+TRAIN_URL   = os.getenv("TRAIN_URL",   "http://model-training-svc:8000")
+INFER_URL   = os.getenv("INFER_URL",   "http://model-inference-svc:8000")
+
+RAW_DIR   = os.getenv("RAW_DIR",   "/shared/data/raw")
+CLEAN_DIR = os.getenv("CLEAN_DIR", "/shared/data/clean")
+MODEL_DIR = os.getenv("MODEL_DIR", "/shared/models")
+ARTIFACTS_DIR   = str(Path(MODEL_DIR) / "artifacts")
+PREDICTIONS_DIR = str(Path(ARTIFACTS_DIR) / "predictions")
+
+# -------------- Client ---------------
+class BackendClient:
+    def __init__(self, timeout:int=20): self.timeout = timeout
+    def start_preprocess(self, input_path:str, **overrides):
+        payload = {
+            "input_path": input_path,
+            "drop_duplicates": True,
+            "impute_numeric": False,
+            "impute_categorical": False,
+            "encode_target": True,
+            "encode_categorical": "mixed",
+            "scale_numeric": "robust",
+            "persist_artifacts": True,
+            "target_column": "Target",
+        }; payload.update(overrides or {})
+        r = requests.post(f"{PREPROC_URL}/preprocess", json=payload, timeout=self.timeout); r.raise_for_status()
+        return r.json().get("job_id")
+    def poll_preprocess(self, job_id:str, wait_s=0.8, timeout_s=300):
+        t_end = time.time() + timeout_s
+        while time.time() < t_end:
+            r = requests.get(f"{PREPROC_URL}/preprocess/{job_id}", timeout=self.timeout); r.raise_for_status()
+            j = r.json()
+            if j.get("state") in ("succeeded","failed"): return j
+            time.sleep(wait_s)
+        raise TimeoutError(f"preprocess {job_id} timed out")
+    def start_train(self, input_path:str, **overrides):
+        payload = {
+            "input_path": input_path,
+            "target_column": "Target",
+            "test_size": 0.2,
+            "val_size": 0.2,
+            "random_state": 42,
+            "stratify": True,
+            "xgb_params": {
+                "n_estimators": 300, "learning_rate": 0.05, "max_depth": 6,
+                "subsample": 0.8, "colsample_bytree": 0.8, "n_jobs": 0,
+                "tree_method": "hist", "objective": "multi:softprob",
+            },
+            "early_stopping_rounds": 20,   # ignored if unsupported
+            "persist_metrics": True,
+        }; payload.update(overrides or {})
+        r = requests.post(f"{TRAIN_URL}/train", json=payload, timeout=self.timeout); r.raise_for_status()
+        return r.json().get("job_id")
+    def poll_train(self, job_id:str, wait_s=1.0, timeout_s=1800):
+        t_end = time.time() + timeout_s
+        while time.time() < t_end:
+            r = requests.get(f"{TRAIN_URL}/train/{job_id}", timeout=self.timeout); r.raise_for_status()
+            j = r.json()
+            if j.get("state") in ("succeeded","failed"): return j
+            time.sleep(wait_s)
+        raise TimeoutError(f"train {job_id} timed out")
+
+client = BackendClient(timeout=20)
+
+# -------------- Helpers --------------
+def ensure_dirs():
+    for p in [RAW_DIR, CLEAN_DIR, MODEL_DIR, ARTIFACTS_DIR, PREDICTIONS_DIR]:
+        Path(p).mkdir(parents=True, exist_ok=True)
+
+def service_ok(url:str)->bool:
+    try: return requests.get(f"{url}/healthz", timeout=3).ok
+    except Exception: return False
+
+def list_paths(d:str, pat:str)->List[Path]:
+    p = Path(d); return sorted([x for x in p.glob(pat) if x.is_file()])
+
+def load_artifacts()->Dict[str,Any]:
+    enc, meta = {}, {}
+    ep, mp = Path(ARTIFACTS_DIR)/"encoders.json", Path(ARTIFACTS_DIR)/"preprocess_meta.json"
+    if ep.exists():
+        try: enc = json.loads(ep.read_text(encoding="utf-8"))
+        except Exception: pass
+    if mp.exists():
+        try: meta = json.loads(mp.read_text(encoding="utf-8"))
+        except Exception: pass
+    return {"enc": enc, "meta": meta}
+
+def render_train_metrics(rep:Dict[str,Any]):
+    st.subheader("Training metrics")
+    c1,c2,c3 = st.columns(3)
+    c1.metric("Val acc", f"{rep.get('val',{}).get('accuracy',0):.3f}")
+    c2.metric("Test acc", f"{rep.get('test',{}).get('accuracy',0):.3f}")
+    c3.metric("Classes", int(rep.get("num_classes",0)))
+    cr = rep.get("classification_report")
+    if cr:
+        st.caption("Classification report (test)")
+        try: st.dataframe(pd.DataFrame(cr).T, use_container_width=True)
+        except Exception: st.text(rep.get("classification_report_text",""))
+    cm = rep.get("confusion_matrix")
+    if cm:
+        st.caption("Confusion matrix (test)")
+        st.dataframe(pd.DataFrame(cm), use_container_width=True)
+
+def normalize_num(s:Optional[str])->Optional[float]:
+    if s is None or s.strip()=="":
+        return None
+    try: return float(s)
+    except Exception: return None
+
+def infer_records(model_path:str, record:Dict[str,Any], top_k:int=3)->Dict[str,Any]:
+    payload = {
+        "model_path": model_path,
+        "artifacts_dir": ARTIFACTS_DIR,
+        "mode": "records",
+        "records": [record],
+        "records_are_raw": True,
+        "return_proba": True,
+        "top_k": int(top_k),
+        "save_predictions": True,
+    }
+    r = requests.post(f"{INFER_URL}/predict", json=payload, timeout=60); r.raise_for_status()
+    return r.json()
+
+def infer_csv(model_path:str, csv_path:str, top_k:int=3)->Dict[str,Any]:
+    payload = {
+        "model_path": model_path,
+        "artifacts_dir": ARTIFACTS_DIR,
+        "mode": "csv",
+        "data_path": csv_path,
+        "return_proba": True,
+        "top_k": int(top_k),
+        "save_predictions": True,
+    }
+    r = requests.post(f"{INFER_URL}/predict", json=payload, timeout=60); r.raise_for_status()
+    return r.json()
+
+# ---------- Build a schema for manual form ----------
+def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Optional[Path])->Dict[str,Any]:
+    """
+    Returns a schema with:
+      fields: List[ Dict{name, kind, options(list)|hint(str)} ]
+      target: Optional[str]
+      source: "encoders" | "meta+csv" | "meta" | "csv" | "fallback"
+    kind ∈ {"numeric","checkbox","select","text"}
+    """
+    schema = {"fields": [], "target": None, "source": "fallback"}
+
+    # Try to get target
+    tgt = None
+    if meta.get("target_column"):
+        tgt = meta["target_column"]
+    elif enc.get("target", {}).get("column"):
+        tgt = enc["target"]["column"]
+    schema["target"] = tgt
+
+    # 1) If encoders contain actual mappings, construct categorical widgets first
+    has_cats = any(enc.get(k) for k in ("binary","ordinal","onehot","label_features"))
+    if has_cats:
+        schema["source"] = "encoders"
+        # Binary
+        for col, mapping in enc.get("binary", {}).items():
+            schema["fields"].append({"name": col, "kind":"select", "options": list(mapping.keys())})
+        # Ordinal
+        for col, info in enc.get("ordinal", {}).items():
+            ordered = info.get("ordered")
+            if not ordered:
+                mp = info.get("mapping", {})
+                ordered = [k for k,_ in sorted(mp.items(), key=lambda kv: kv[1])]
+            schema["fields"].append({"name": col, "kind":"select", "options": ordered or []})
+        # Onehot (single select)
+        for col, info in enc.get("onehot", {}).items():
+            cats = info.get("categories", [])
+            schema["fields"].append({"name": col, "kind":"select", "options": cats})
+        # Label
+        for col, info in enc.get("label_features", {}).items():
+            classes = [str(x) for x in info.get("classes", [])]
+            schema["fields"].append({"name": col, "kind":"select", "options": classes})
+        # Add numeric from meta if present
+        for col in meta.get("num_cols", []):
+            if col != tgt:
+                schema["fields"].append({"name": col, "kind":"numeric"})
+        # Done
+        if schema["fields"]:
+            return schema
+
+    # 2) If meta has final_columns, derive from CSV dtypes when available
+    final_cols = meta.get("final_columns") or []
+    if final_cols:
+        feats = [c for c in final_cols if c != tgt]
+        sample_df = None
+        if cleaned_csv and cleaned_csv.exists():
+            try:
+                sample_df = pd.read_csv(cleaned_csv, nrows=2000)
+            except Exception:
+                sample_df = None
+
+        if sample_df is not None:
+            # Use dtypes & values to pick widgets
+            for col in feats:
+                if col not in sample_df.columns:
+                    # if not in CSV (possible in some flows), fall back to text
+                    schema["fields"].append({"name": col, "kind":"text"})
+                    continue
+                s = sample_df[col]
+                if pd.api.types.is_numeric_dtype(s):
+                    # checkbox if strictly binary {0,1}
+                    uniq = sorted(pd.unique(s.dropna()))
+                    if len(uniq) <= 2 and set(uniq).issubset({0,1}):
+                        schema["fields"].append({"name": col, "kind":"checkbox"})
+                    else:
+                        schema["fields"].append({"name": col, "kind":"numeric"})
+                else:
+                    top = s.dropna().astype(str).value_counts().index.tolist()[:15]
+                    if 1 <= len(top) <= 15:
+                        schema["fields"].append({"name": col, "kind":"select", "options": top})
+                    else:
+                        schema["fields"].append({"name": col, "kind":"text", "hint": ", ".join(top[:5])})
+            schema["source"] = "meta+csv"
+            return schema
+        else:
+            # No CSV — render all as text so the form never disappears
+            for col in feats:
+                schema["fields"].append({"name": col, "kind":"text"})
+            schema["source"] = "meta"
+            return schema
+
+    # 3) Last-resort CSV-only (no meta at all)
+    if cleaned_csv and cleaned_csv.exists():
+        try:
+            df = pd.read_csv(cleaned_csv, nrows=2000)
+            # pick target heuristically
+            if schema["target"] is None:
+                for cand in ["Target","target","label","y"]:
+                    if cand in df.columns: schema["target"] = cand; break
+            feats = [c for c in df.columns if c != schema["target"]]
+            for col in feats:
+                s = df[col]
+                if pd.api.types.is_numeric_dtype(s):
+                    uniq = sorted(pd.unique(s.dropna()))
+                    if len(uniq) <= 2 and set(uniq).issubset({0,1}):
+                        schema["fields"].append({"name": col, "kind":"checkbox"})
+                    else:
+                        schema["fields"].append({"name": col, "kind":"numeric"})
+                else:
+                    top = s.dropna().astype(str).value_counts().index.tolist()[:15]
+                    if 1 <= len(top) <= 15:
+                        schema["fields"].append({"name": col, "kind":"select", "options": top})
+                    else:
+                        schema["fields"].append({"name": col, "kind":"text", "hint": ", ".join(top[:5])})
+            schema["source"] = "csv"
+            return schema
+        except Exception:
+            pass
+
+    # 4) Fallback — empty schema: show nothing (but the button will remain)
+    return schema
+
+# ---------------- Page ----------------
+st.set_page_config(page_title="Hospital ML – UI", layout="wide")
+st.title("🏥 Hospital ML – End-to-End (Kubernetes)")
+ensure_dirs()
+
+with st.sidebar:
+    st.subheader("Services")
+    st.write(f"Preprocessing: {'🟢' if service_ok(PREPROC_URL) else '🔴'}")
+    st.write(f"Training:      {'🟢' if service_ok(TRAIN_URL) else '🔴'}")
+    st.write(f"Inference:     {'🟢' if service_ok(INFER_URL) else '🔴'}")
+    st.caption("Paths")
+    st.code(f"RAW_DIR={RAW_DIR}\nCLEAN_DIR={CLEAN_DIR}\nMODEL_DIR={MODEL_DIR}")
+
+# --- 1) Upload & preprocess ---
+st.header("1) Upload raw CSV and preprocess")
+up = st.file_uploader("Upload CSV", type=["csv"])
+c1, c2 = st.columns([3,2])
+if up is not None:
+    raw_path = Path(RAW_DIR) / up.name
+    with open(raw_path, "wb") as f: f.write(up.getbuffer())
+    st.success(f"Uploaded → {raw_path}")
+    if c1.button("Run preprocessing", use_container_width=True):
+        try:
+            jid = client.start_preprocess(str(raw_path))
+            with st.spinner("Preprocessing..."):
+                res = client.poll_preprocess(jid)
+            if res.get("state") == "succeeded":
+                out_path = res.get("output_path")
+                st.success(f"✅ Preprocessing complete → {out_path}")
+                rep = res.get("report",{}) or {}
+                st.write(f"Shape before/after: {rep.get('shape_before')} → {rep.get('shape_after')}")
+            else:
+                st.error(f"Preprocess failed: {res.get('error')}")
+                if res.get("trace"): st.code(res["trace"])
+        except Exception as e:
+            st.error(f"Preprocess error: {e}")
+else:
+    c1.info("Upload a CSV to enable preprocessing.")
+
+# --- 2) pick cleaned CSV & preview ---
+st.header("2) Pick a cleaned CSV")
+clean_files = list_paths(CLEAN_DIR, "*_clean.csv")
+sel_clean: Optional[Path] = None
+if clean_files:
+    sel_clean = st.selectbox("Cleaned CSV", clean_files, format_func=lambda p: p.name)
+    try:
+        st.caption("Preview (first 10 rows)")
+        st.dataframe(pd.read_csv(sel_clean).head(10), use_container_width=True)
+    except Exception as e:
+        st.warning(f"Preview failed: {e}")
+else:
+    st.info("No *_clean.csv yet. Run preprocessing above.")
+
+# --- 3) train ---
+st.header("3) Train model (XGBoost)")
+t1, _ = st.columns([3,2])
+if sel_clean and t1.button("Start training", use_container_width=True):
+    try:
+        jid = client.start_train(str(sel_clean))
+        with st.spinner("Training..."):
+            res = client.poll_train(jid)
+        if res.get("state") == "succeeded":
+            st.success("✅ Training complete!")
+            render_train_metrics(res.get("report", {}) or {})
+            st.caption(f"Model saved:  {res.get('model_path')}")
+            if res.get("report_path"): st.caption(f"Report: {res.get('report_path')}")
+        else:
+            st.error(f"Training failed: {res.get('error')}")
+            if res.get("trace"): st.code(res["trace"])
+    except Exception as e:
+        st.error(f"Train error: {e}")
+
+# --- 4A) manual inference (ALWAYS renders fields) ---
+st.header("4A) Predict from manual inputs (single record)")
+models = list_paths(MODEL_DIR, "*.joblib")
+model_choice = st.selectbox("Model (.joblib)", models, format_func=lambda p: p.name, key="inf_model_form")
+
+art = load_artifacts()
+schema = build_feature_schema(art.get("enc",{}) or {}, art.get("meta",{}) or {}, sel_clean)
+
+if schema["source"] == "encoders":
+    st.caption("Fields built from preprocessing artifacts.")
+elif schema["source"] == "meta+csv":
+    st.caption("Fields built from final_columns + cleaned CSV dtypes.")
+elif schema["source"] == "meta":
+    st.caption("No CSV sample — rendering text fields from final_columns.")
+elif schema["source"] == "csv":
+    st.caption("No artifacts — fields inferred directly from the cleaned CSV.")
+else:
+    st.caption("No artifacts/CSV available; form will be minimal.")
+
+with st.form("manual_inference_form", clear_on_submit=False):
+    rec: Dict[str,Any] = {}
+    for fld in schema["fields"]:
+        name = fld["name"]; kind = fld["kind"]
+        if kind == "numeric":
+            rec[name] = st.text_input(f"{name} (numeric)", key=f"num_{name}")
+        elif kind == "checkbox":
+            rec[name] = st.checkbox(name, key=f"chk_{name}", value=False)
+        elif kind == "select":
+            options = fld.get("options", [])
+            rec[name] = st.selectbox(name, options, key=f"sel_{name}") if options else st.text_input(name, key=f"txt_{name}")
+        else:  # text
+            rec[name] = st.text_input(name, key=f"txt_{name}", help=fld.get("hint"))
+    submitted = st.form_submit_button("Run inference (manual)")
+
+if submitted:
+    if not model_choice:
+        st.warning("Select a model first.")
+    else:
+        cleaned: Dict[str,Any] = {}
+        for k, v in rec.items():
+            if isinstance(v, str):
+                if v.strip()=="":
+                    continue
+                nv = normalize_num(v)
+                cleaned[k] = nv if nv is not None else v
+            else:
+                cleaned[k] = int(v) if isinstance(v, bool) else v
+        try:
+            with st.spinner("Running model inference..."):
+                resp = infer_records(str(model_choice), cleaned, top_k=3)
+            st.success(f"✅ Model inference complete! Predictions saved to: {resp.get('predictions_path')}")
+            samp = resp.get("sample") or []
+            if samp:
+                st.caption("Sample prediction")
+                st.dataframe(pd.DataFrame(samp), use_container_width=True)
+        except Exception as e:
+            st.error(f"Inference error: {e}")
+
+# --- 4B) batch inference on cleaned CSV ---
+st.header("4B) Predict on a cleaned CSV (batch)")
+csv_model = st.selectbox("Model (.joblib) for batch", models, format_func=lambda p: p.name, key="inf_model_csv")
+csv_choice = st.selectbox("Cleaned CSV", clean_files, format_func=lambda p: p.name, key="inf_csv")
+top_k = st.slider("Top-K probabilities", 1, 5, 3)
+if csv_model and csv_choice and st.button("Run batch inference", use_container_width=True):
+    try:
+        with st.spinner("Running batch inference..."):
+            resp = infer_csv(str(csv_model), str(csv_choice), top_k=top_k)
+        st.success(f"✅ Batch inference complete! Predictions saved to: {resp.get('predictions_path')}")
+        samp = resp.get("sample") or []
+        if samp:
+            st.caption("Sample predictions")
+            st.dataframe(pd.DataFrame(samp), use_container_width=True)
+    except Exception as e:
+        st.error(f"Inference error: {e}")
+
+# --- 5) artifacts & downloads ---
+st.header("5) Artifacts")
+cols = st.columns(4)
+with cols[0]:
+    st.subheader("Cleaned CSVs")
+    files = list_paths(CLEAN_DIR, "*.csv")
+    if files:
+        sel = st.selectbox("Choose CSV", files, format_func=lambda p:p.name, key="dl_csv")
+        if sel.exists():
+            with open(sel,"rb") as f: st.download_button("Download CSV", f.read(), file_name=sel.name, mime="text/csv", use_container_width=True)
+    else: st.write("No files.")
+with cols[1]:
+    st.subheader("Models")
+    files = list_paths(MODEL_DIR, "*.joblib")
+    if files:
+        sel = st.selectbox("Choose model", files, format_func=lambda p:p.name, key="dl_model")
+        if sel.exists():
+            with open(sel,"rb") as f: st.download_button("Download model", f.read(), file_name=sel.name, mime="application/octet-stream", use_container_width=True)
+    else: st.write("No models.")
+with cols[2]:
+    st.subheader("Training reports")
+    files = list_paths(ARTIFACTS_DIR, "training_report_*.json")
+    if files:
+        sel = st.selectbox("Choose report", files, format_func=lambda p:p.name, key="dl_report")
+        if sel.exists():
+            with open(sel,"rb") as f: st.download_button("Download report", f.read(), file_name=sel.name, mime="application/json", use_container_width=True)
+    else: st.write("None yet.")
+with cols[3]:
+    st.subheader("Predictions")
+    files = list_paths(PREDICTIONS_DIR, "*.csv")
+    if files:
+        sel = st.selectbox("Choose predictions", files, format_func=lambda p:p.name, key="dl_preds")
+        if sel.exists():
+            with open(sel,"rb") as f: st.download_button("Download predictions", f.read(), file_name=sel.name, mime="text/csv", use_container_width=True)
+    else: st.write("None yet.")
+
+st.caption("Tip: If fields look sparse, be sure a cleaned CSV is selected in Section 2.")

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-training-svc
+  namespace: hospital-ml
+  labels:
+    app: model-training
+    tier: backend
+    part-of: hospital-ml
+spec:
+  type: ClusterIP
+  selector:
+    app: model-training
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

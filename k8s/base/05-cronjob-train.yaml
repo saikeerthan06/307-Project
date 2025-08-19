@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-retrain
+  namespace: hospital-ml
+spec:
+  schedule: "0 2 * * *"     # 02:00 every day
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels: { app: model-training-trainjob }
+        spec:
+          serviceAccountName: model-training-sa
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+            - name: train
+              image: saikeerthan06/model-training:<your-tag>      # <-- your real image/tag
+              imagePullPolicy: Always
+              command: ["python","model_training/app.py","--mode","train",
+                        "--input_path","/shared/data/diabetes_dataset00.csv",
+                        "--prep_output_dir","/shared/clean",
+                        "--model_dir","/shared/models",
+                        "--target","Target","--label_encode_target","true"]
+              envFrom:
+                - configMapRef: { name: model-training-config }
+                - secretRef:    { name: model-training-secret }
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
+          volumes:
+            - name: shared
+              persistentVolumeClaim:
+                claimName: shared-pvc

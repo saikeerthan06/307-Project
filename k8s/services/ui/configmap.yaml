@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ui-config
+  namespace: hospital-ml
+data:
+  PREPROC_URL: "http://data-preprocessing-svc:8000"
+  TRAIN_URL:   "http://model-training-svc:8000"
+  INFER_URL:   "http://model-inference-svc:8000"
+  RAW_DIR:     "/shared/data/raw"
+  CLEAN_DIR:   "/shared/data/clean"
+  MODEL_DIR:   "/shared/models"
