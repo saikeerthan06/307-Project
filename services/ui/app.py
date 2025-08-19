@@ -18,6 +18,17 @@ MODEL_DIR = os.getenv("MODEL_DIR", "/shared/models")
 ARTIFACTS_DIR   = str(Path(MODEL_DIR) / "artifacts")
 PREDICTIONS_DIR = str(Path(ARTIFACTS_DIR) / "predictions")
 
+import os
+RAW_DIR   = os.getenv("RAW_DIR", "/shared/data/raw")
+CLEAN_DIR = os.getenv("CLEAN_DIR", "/shared/data/clean")
+
+if "uploaded_raw_path" not in st.session_state:
+    st.session_state.uploaded_raw_path = None  # abs path to uploaded raw CSV
+if "cleaned_csv_path" not in st.session_state:
+    st.session_state.cleaned_csv_path = None   # abs path returned by preprocess job
+if "model_ready" not in st.session_state:
+    st.session_state.model_ready = False       # flip True after training succeeds
+
 # -------------- Client ---------------
 class BackendClient:
     def __init__(self, timeout:int=20): self.timeout = timeout
@@ -35,11 +46,12 @@ class BackendClient:
         }; payload.update(overrides or {})
         r = requests.post(f"{PREPROC_URL}/preprocess", json=payload, timeout=self.timeout); r.raise_for_status()
         return r.json().get("job_id")
-    def poll_preprocess(self, job_id:str, wait_s=0.8, timeout_s=300):
+    def poll_preprocess(self, job_id:str, wait_s=0.8, timeout_s=300, progress_fn=None):
         t_end = time.time() + timeout_s
         while time.time() < t_end:
             r = requests.get(f"{PREPROC_URL}/preprocess/{job_id}", timeout=self.timeout); r.raise_for_status()
             j = r.json()
+            if progress_fn: progress_fn(j)
             if j.get("state") in ("succeeded","failed"): return j
             time.sleep(wait_s)
         raise TimeoutError(f"preprocess {job_id} timed out")
@@ -279,6 +291,7 @@ with st.sidebar:
     st.code(f"RAW_DIR={RAW_DIR}\nCLEAN_DIR={CLEAN_DIR}\nMODEL_DIR={MODEL_DIR}")
 
 # --- 1) Upload & preprocess ---
+# --- 1) Upload raw CSV and preprocess ---
 st.header("1) Upload raw CSV and preprocess")
 up = st.file_uploader("Upload CSV", type=["csv"])
 c1, c2 = st.columns([3,2])
@@ -286,44 +299,82 @@ if up is not None:
     raw_path = Path(RAW_DIR) / up.name
     with open(raw_path, "wb") as f: f.write(up.getbuffer())
     st.success(f"Uploaded → {raw_path}")
+    st.session_state.uploaded_raw_path = str(raw_path)
     if c1.button("Run preprocessing", use_container_width=True):
         try:
             jid = client.start_preprocess(str(raw_path))
+            status_ph = st.empty()
+            def _report(j: Dict[str, Any]):
+                st.session_state["_preproc_state"] = j.get("state")
+                s = j.get("state", "?")
+                prog = j.get("progress") or j.get("pct") or j.get("step")
+                msg = j.get("message") or j.get("detail")
+                line = f"**Status:** {s}"
+                if prog is not None:
+                    line += f" | **Progress:** {prog}"
+                if msg:
+                    line += f"\n{msg}"
+                status_ph.markdown(line)
+
             with st.spinner("Preprocessing..."):
-                res = client.poll_preprocess(jid)
+                res = client.poll_preprocess(jid, timeout_s=900, progress_fn=_report)
+
             if res.get("state") == "succeeded":
                 out_path = res.get("output_path")
+                st.session_state.cleaned_csv_path = out_path
+                st.session_state.model_ready = False
+                status_ph.empty()
                 st.success(f"✅ Preprocessing complete → {out_path}")
                 rep = res.get("report",{}) or {}
                 st.write(f"Shape before/after: {rep.get('shape_before')} → {rep.get('shape_after')}")
-            else:
+            elif res.get("state") == "failed":
                 st.error(f"Preprocess failed: {res.get('error')}")
                 if res.get("trace"): st.code(res["trace"])
+            else:
+                st.warning("Preprocess ended in an unknown state. Please check the data-preprocessing logs.")
         except Exception as e:
             st.error(f"Preprocess error: {e}")
 else:
     c1.info("Upload a CSV to enable preprocessing.")
 
-# --- 2) pick cleaned CSV & preview ---
+# --- 2) pick cleaned CSV (gated, no preview) ---
 st.header("2) Pick a cleaned CSV")
-clean_files = list_paths(CLEAN_DIR, "*_clean.csv")
 sel_clean: Optional[Path] = None
-if clean_files:
-    sel_clean = st.selectbox("Cleaned CSV", clean_files, format_func=lambda p: p.name)
-    try:
-        st.caption("Preview (first 10 rows)")
-        st.dataframe(pd.read_csv(sel_clean).head(10), use_container_width=True)
-    except Exception as e:
-        st.warning(f"Preview failed: {e}")
+if st.session_state.cleaned_csv_path:
+    # Build choices but default to the file produced by the last preprocess
+    default_path = Path(st.session_state.cleaned_csv_path)
+    clean_files = list_paths(CLEAN_DIR, "*_clean.csv")
+    # Ensure the default is in the options
+    if default_path.exists() and default_path not in clean_files:
+        clean_files = [default_path] + clean_files
+    if clean_files:
+        # Pre-select the default file when present
+        def_idx = 0
+        if default_path in clean_files:
+            def_idx = clean_files.index(default_path)
+        sel_clean = st.selectbox(
+            "Cleaned CSV",
+            clean_files,
+            index=def_idx,
+            format_func=lambda p: p.name,
+        )
+    else:
+        # Fallback to the session path if the glob missed it
+        sel_clean = default_path
+    # Persist selection
+    if sel_clean:
+        st.session_state.cleaned_csv_path = str(sel_clean)
+        st.caption(f"Using cleaned CSV: `{Path(st.session_state.cleaned_csv_path).name}`")
 else:
-    st.info("No *_clean.csv yet. Run preprocessing above.")
+    st.info("Upload a CSV and run preprocessing to unlock this step.")
 
-# --- 3) train ---
+# --- 3) Train model (XGBoost) ---
 st.header("3) Train model (XGBoost)")
 t1, _ = st.columns([3,2])
-if sel_clean and t1.button("Start training", use_container_width=True):
+sel_clean_path = Path(st.session_state.cleaned_csv_path) if st.session_state.cleaned_csv_path else None
+if sel_clean_path and t1.button("Start training", use_container_width=True):
     try:
-        jid = client.start_train(str(sel_clean))
+        jid = client.start_train(str(sel_clean_path))
         with st.spinner("Training..."):
             res = client.poll_train(jid)
         if res.get("state") == "succeeded":
@@ -331,86 +382,128 @@ if sel_clean and t1.button("Start training", use_container_width=True):
             render_train_metrics(res.get("report", {}) or {})
             st.caption(f"Model saved:  {res.get('model_path')}")
             if res.get("report_path"): st.caption(f"Report: {res.get('report_path')}")
+            # Gate inference on successful training
+            st.session_state.model_ready = True
+            if res.get("model_path"):
+                st.session_state.model_path = res.get("model_path")
         else:
             st.error(f"Training failed: {res.get('error')}")
-            if res.get("trace"): st.code(res["trace"])
+            if res.get("trace"): st.code(res["trace"]) 
     except Exception as e:
         st.error(f"Train error: {e}")
+elif not sel_clean_path:
+    st.info("Pick a cleaned CSV to enable training.")
 
-# --- 4A) manual inference (ALWAYS renders fields) ---
-st.header("4A) Predict from manual inputs (single record)")
-models = list_paths(MODEL_DIR, "*.joblib")
-model_choice = st.selectbox("Model (.joblib)", models, format_func=lambda p: p.name, key="inf_model_form")
-
-art = load_artifacts()
-schema = build_feature_schema(art.get("enc",{}) or {}, art.get("meta",{}) or {}, sel_clean)
-
-if schema["source"] == "encoders":
-    st.caption("Fields built from preprocessing artifacts.")
-elif schema["source"] == "meta+csv":
-    st.caption("Fields built from final_columns + cleaned CSV dtypes.")
-elif schema["source"] == "meta":
-    st.caption("No CSV sample — rendering text fields from final_columns.")
-elif schema["source"] == "csv":
-    st.caption("No artifacts — fields inferred directly from the cleaned CSV.")
-else:
-    st.caption("No artifacts/CSV available; form will be minimal.")
-
-with st.form("manual_inference_form", clear_on_submit=False):
-    rec: Dict[str,Any] = {}
-    for fld in schema["fields"]:
-        name = fld["name"]; kind = fld["kind"]
-        if kind == "numeric":
-            rec[name] = st.text_input(f"{name} (numeric)", key=f"num_{name}")
-        elif kind == "checkbox":
-            rec[name] = st.checkbox(name, key=f"chk_{name}", value=False)
-        elif kind == "select":
-            options = fld.get("options", [])
-            rec[name] = st.selectbox(name, options, key=f"sel_{name}") if options else st.text_input(name, key=f"txt_{name}")
-        else:  # text
-            rec[name] = st.text_input(name, key=f"txt_{name}", help=fld.get("hint"))
-    submitted = st.form_submit_button("Run inference (manual)")
-
-if submitted:
-    if not model_choice:
-        st.warning("Select a model first.")
-    else:
-        cleaned: Dict[str,Any] = {}
-        for k, v in rec.items():
-            if isinstance(v, str):
-                if v.strip()=="":
-                    continue
-                nv = normalize_num(v)
-                cleaned[k] = nv if nv is not None else v
-            else:
-                cleaned[k] = int(v) if isinstance(v, bool) else v
+# --- 4) Inference (gated until a trained model exists) ---
+st.header("4) Inference")
+if st.session_state.model_ready:
+    # 4A) Predict from manual inputs (single record)
+    st.subheader("4A) Predict from manual inputs (single record)")
+    models = list_paths(MODEL_DIR, "*.joblib")
+    # Prefer the most recently trained model if available
+    default_model_idx = 0
+    if models and getattr(st.session_state, "model_path", None):
         try:
-            with st.spinner("Running model inference..."):
-                resp = infer_records(str(model_choice), cleaned, top_k=3)
-            st.success(f"✅ Model inference complete! Predictions saved to: {resp.get('predictions_path')}")
+            default_model_idx = models.index(Path(st.session_state.model_path))
+        except ValueError:
+            default_model_idx = 0
+    model_choice = st.selectbox(
+        "Model (.joblib)",
+        models,
+        index=default_model_idx if models else 0,
+        format_func=lambda p: p.name,
+        key="inf_model_form",
+    ) if models else None
+
+    art = load_artifacts()
+    sel_clean_for_schema = Path(st.session_state.cleaned_csv_path) if st.session_state.cleaned_csv_path else None
+    schema = build_feature_schema(art.get("enc",{}) or {}, art.get("meta",{}) or {}, sel_clean_for_schema)
+
+    if schema["source"] == "encoders":
+        st.caption("Fields built from preprocessing artifacts.")
+    elif schema["source"] == "meta+csv":
+        st.caption("Fields built from final_columns + cleaned CSV dtypes.")
+    elif schema["source"] == "meta":
+        st.caption("No CSV sample — rendering text fields from final_columns.")
+    elif schema["source"] == "csv":
+        st.caption("No artifacts — fields inferred directly from the cleaned CSV.")
+    else:
+        st.caption("No artifacts/CSV available; form will be minimal.")
+
+    with st.form("manual_inference_form", clear_on_submit=False):
+        rec: Dict[str,Any] = {}
+        for fld in schema["fields"]:
+            name = fld["name"]; kind = fld["kind"]
+            if kind == "numeric":
+                rec[name] = st.text_input(f"{name} (numeric)", key=f"num_{name}")
+            elif kind == "checkbox":
+                rec[name] = st.checkbox(name, key=f"chk_{name}", value=False)
+            elif kind == "select":
+                options = fld.get("options", [])
+                rec[name] = st.selectbox(name, options, key=f"sel_{name}") if options else st.text_input(name, key=f"txt_{name}")
+            else:  # text
+                rec[name] = st.text_input(name, key=f"txt_{name}", help=fld.get("hint"))
+        submitted = st.form_submit_button("Run inference (manual)")
+
+    if submitted:
+        if not model_choice:
+            st.warning("Select a model first.")
+        else:
+            cleaned: Dict[str,Any] = {}
+            for k, v in rec.items():
+                if isinstance(v, str):
+                    if v.strip()=="":
+                        continue
+                    nv = normalize_num(v)
+                    cleaned[k] = nv if nv is not None else v
+                else:
+                    cleaned[k] = int(v) if isinstance(v, bool) else v
+            try:
+                with st.spinner("Running model inference..."):
+                    resp = infer_records(str(model_choice), cleaned, top_k=3)
+                st.success(f"✅ Model inference complete! Predictions saved to: {resp.get('predictions_path')}")
+                samp = resp.get("sample") or []
+                if samp:
+                    st.caption("Sample prediction")
+                    st.dataframe(pd.DataFrame(samp), use_container_width=True)
+            except Exception as e:
+                st.error(f"Inference error: {e}")
+
+    # 4B) Batch inference on a cleaned CSV
+    st.subheader("4B) Predict on a cleaned CSV (batch)")
+    csv_model = st.selectbox(
+        "Model (.joblib) for batch",
+        models,
+        index=default_model_idx if models else 0,
+        format_func=lambda p: p.name,
+        key="inf_model_csv",
+    ) if models else None
+    clean_files_for_batch = []
+    if st.session_state.cleaned_csv_path:
+        p0 = Path(st.session_state.cleaned_csv_path)
+        clean_files_for_batch = list_paths(CLEAN_DIR, "*_clean.csv")
+        if p0.exists() and p0 not in clean_files_for_batch:
+            clean_files_for_batch = [p0] + clean_files_for_batch
+    csv_choice = st.selectbox(
+        "Cleaned CSV",
+        clean_files_for_batch,
+        format_func=lambda p: p.name,
+        key="inf_csv",
+    ) if clean_files_for_batch else None
+    top_k = st.slider("Top-K probabilities", 1, 5, 3)
+    if csv_model and csv_choice and st.button("Run batch inference", use_container_width=True):
+        try:
+            with st.spinner("Running batch inference..."):
+                resp = infer_csv(str(csv_model), str(csv_choice), top_k=top_k)
+            st.success(f"✅ Batch inference complete! Predictions saved to: {resp.get('predictions_path')}")
             samp = resp.get("sample") or []
             if samp:
-                st.caption("Sample prediction")
+                st.caption("Sample predictions")
                 st.dataframe(pd.DataFrame(samp), use_container_width=True)
         except Exception as e:
             st.error(f"Inference error: {e}")
-
-# --- 4B) batch inference on cleaned CSV ---
-st.header("4B) Predict on a cleaned CSV (batch)")
-csv_model = st.selectbox("Model (.joblib) for batch", models, format_func=lambda p: p.name, key="inf_model_csv")
-csv_choice = st.selectbox("Cleaned CSV", clean_files, format_func=lambda p: p.name, key="inf_csv")
-top_k = st.slider("Top-K probabilities", 1, 5, 3)
-if csv_model and csv_choice and st.button("Run batch inference", use_container_width=True):
-    try:
-        with st.spinner("Running batch inference..."):
-            resp = infer_csv(str(csv_model), str(csv_choice), top_k=top_k)
-        st.success(f"✅ Batch inference complete! Predictions saved to: {resp.get('predictions_path')}")
-        samp = resp.get("sample") or []
-        if samp:
-            st.caption("Sample predictions")
-            st.dataframe(pd.DataFrame(samp), use_container_width=True)
-    except Exception as e:
-        st.error(f"Inference error: {e}")
+else:
+    st.info("Train a model to enable inference.")
 
 # --- 5) artifacts & downloads ---
 st.header("5) Artifacts")
@@ -448,4 +541,4 @@ with cols[3]:
             with open(sel,"rb") as f: st.download_button("Download predictions", f.read(), file_name=sel.name, mime="text/csv", use_container_width=True)
     else: st.write("None yet.")
 
-st.caption("Tip: If fields look sparse, be sure a cleaned CSV is selected in Section 2.")
+st.caption("Tip: Upload → Preprocess → Train before running inference. ")
