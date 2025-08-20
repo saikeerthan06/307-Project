@@ -26,7 +26,7 @@ trap 'err "Aborted at $BASH_SOURCE:$LINENO ($BASH_COMMAND)"' ERR
 # =========================================
 
 # ---- Config (env-overridable)
-UI_IMAGE_TAG="${UI_IMAGE_TAG:-ui:1.2.5}"
+UI_IMAGE_TAG="${UI_IMAGE_TAG:-ui:1.2.6}"
 DP_IMAGE_TAG="${DP_IMAGE_TAG:-data-preprocessing:2.0.0}"
 MT_IMAGE_TAG="${MT_IMAGE_TAG:-model-training:1.0.2}"
 MI_IMAGE_TAG="${MI_IMAGE_TAG:-model-inference:1.0.1}"

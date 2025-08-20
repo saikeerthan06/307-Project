@@ -189,9 +189,11 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
     has_cats = any(enc.get(k) for k in ("binary","ordinal","onehot","label_features"))
     if has_cats:
         schema["source"] = "encoders"
+        existing = set()
         # Binary
         for col, mapping in enc.get("binary", {}).items():
             schema["fields"].append({"name": col, "kind":"select", "options": list(mapping.keys())})
+            existing.add(col)
         # Ordinal
         for col, info in enc.get("ordinal", {}).items():
             ordered = info.get("ordered")
@@ -199,19 +201,47 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
                 mp = info.get("mapping", {})
                 ordered = [k for k,_ in sorted(mp.items(), key=lambda kv: kv[1])]
             schema["fields"].append({"name": col, "kind":"select", "options": ordered or []})
+            existing.add(col)
         # Onehot (single select)
         for col, info in enc.get("onehot", {}).items():
             cats = info.get("categories", [])
             schema["fields"].append({"name": col, "kind":"select", "options": cats})
+            existing.add(col)
         # Label
         for col, info in enc.get("label_features", {}).items():
             classes = [str(x) for x in info.get("classes", [])]
             schema["fields"].append({"name": col, "kind":"select", "options": classes})
+            existing.add(col)
         # Add numeric from meta if present
+        numeric_added = False
         for col in meta.get("num_cols", []):
-            if col != tgt:
-                schema["fields"].append({"name": col, "kind":"numeric"})
-        # Done
+            if col != tgt and col not in existing:
+                schema["fields"].append({"name": col, "kind": "numeric"})
+                existing.add(col)
+                numeric_added = True
+
+        # If we only had categorical encoders and meta lacks num_cols,
+        # augment with numerics inferred from the cleaned CSV sample
+        if not numeric_added and cleaned_csv and cleaned_csv.exists():
+            try:
+                _df = pd.read_csv(cleaned_csv, nrows=2000)
+                for col in _df.columns:
+                    if col == tgt or col in existing:
+                        continue
+                    s = _df[col]
+                    if pd.api.types.is_numeric_dtype(s):
+                        uniq = sorted(pd.unique(s.dropna()))
+                        if len(uniq) <= 2 and set(uniq).issubset({0, 1}):
+                            schema["fields"].append({"name": col, "kind": "checkbox"})
+                        else:
+                            schema["fields"].append({"name": col, "kind": "numeric"})
+                        existing.add(col)
+                # Mark that our field set came from encoders + csv augmentation
+                schema["source"] = "encoders+csv"
+            except Exception:
+                pass
+
+        # If we have any fields at this point, return the schema
         if schema["fields"]:
             return schema
 
@@ -468,7 +498,7 @@ if st.session_state.model_ready:
         for fld in schema["fields"]:
             name = fld["name"]; kind = fld["kind"]
             if kind == "numeric":
-                rec[name] = st.text_input(f"{name} (numeric)", key=f"num_{name}")
+                rec[name] = st.number_input(name, key=f"num_{name}")
             elif kind == "checkbox":
                 rec[name] = st.checkbox(name, key=f"chk_{name}", value=False)
             elif kind == "select":

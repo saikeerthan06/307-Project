@@ -5,7 +5,7 @@ set -euo pipefail
 # Ensure Blue/Green UI is deployed and the ui Service points to the desired color.
 # Usage: bluegreen-setup.sh [NAMESPACE] [blue|green]
 NS="${1:-hospital-ml}"
-COLOR="${2:-blue}"
+COLOR="${2:-green}"
 if [[ "$COLOR" != "blue" && "$COLOR" != "green" ]]; then
   echo "Usage: $0 [NAMESPACE] [blue|green]" >&2
   exit 1
