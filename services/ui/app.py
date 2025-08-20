@@ -2,6 +2,8 @@
 import os, json, time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from client import BackendClient
+cli = BackendClient(timeout=20)
 
 import requests
 import streamlit as st
@@ -457,6 +459,7 @@ if sel_clean_path and t1.button("Start training", use_container_width=True):
 elif not sel_clean_path:
     st.info("Pick a cleaned CSV to enable training.")
 
+
 # --- 4) Inference (gated until a trained model exists) ---
 st.header("4) Inference")
 if st.session_state.model_ready:
@@ -494,13 +497,26 @@ if st.session_state.model_ready:
         st.caption("No artifacts/CSV available; form will be minimal.")
 
     with st.form("manual_inference_form", clear_on_submit=False):
-        rec: Dict[str,Any] = {}
+        # rec: Dict[str,Any] = {}
+        # for fld in schema["fields"]:
+        #     name = fld["name"]; kind = fld["kind"]
+        #     if kind == "numeric":
+        #         rec[name] = st.number_input(name, key=f"num_{name}")
+        #     elif kind == "checkbox":
+        #         rec[name] = st.checkbox(name, key=f"chk_{name}", value=False)
+        #     elif kind == "select":
+        #         options = fld.get("options", [])
+        #         rec[name] = st.selectbox(name, options, key=f"sel_{name}") if options else st.text_input(name, key=f"txt_{name}")
+        #     else:  # text
+        #         rec[name] = st.text_input(name, key=f"txt_{name}", help=fld.get("hint"))
+        # submitted = st.form_submit_button("Run inference (manual)")
+        rec: Dict[str, Any] = {}
         for fld in schema["fields"]:
             name = fld["name"]; kind = fld["kind"]
             if kind == "numeric":
                 rec[name] = st.number_input(name, key=f"num_{name}")
             elif kind == "checkbox":
-                rec[name] = st.checkbox(name, key=f"chk_{name}", value=False)
+                rec[name] = 1 if st.checkbox(name, key=f"chk_{name}", value=False) else 0   # <-- CHANGED
             elif kind == "select":
                 options = fld.get("options", [])
                 rec[name] = st.selectbox(name, options, key=f"sel_{name}") if options else st.text_input(name, key=f"txt_{name}")
@@ -532,39 +548,6 @@ if st.session_state.model_ready:
             except Exception as e:
                 st.error(f"Inference error: {e}")
 
-    # 4B) Batch inference on a cleaned CSV
-    st.subheader("4B) Predict on a cleaned CSV (batch)")
-    csv_model = st.selectbox(
-        "Model (.joblib) for batch",
-        models,
-        index=default_model_idx if models else 0,
-        format_func=lambda p: p.name,
-        key="inf_model_csv",
-    ) if models else None
-    clean_files_for_batch = []
-    if st.session_state.cleaned_csv_path:
-        p0 = Path(st.session_state.cleaned_csv_path)
-        clean_files_for_batch = list_paths(CLEAN_DIR, "*_clean.csv")
-        if p0.exists() and p0 not in clean_files_for_batch:
-            clean_files_for_batch = [p0] + clean_files_for_batch
-    csv_choice = st.selectbox(
-        "Cleaned CSV",
-        clean_files_for_batch,
-        format_func=lambda p: p.name,
-        key="inf_csv",
-    ) if clean_files_for_batch else None
-    top_k = st.slider("Top-K probabilities", 1, 5, 3)
-    if csv_model and csv_choice and st.button("Run batch inference", use_container_width=True):
-        try:
-            with st.spinner("Running batch inference..."):
-                resp = infer_csv(str(csv_model), str(csv_choice), top_k=top_k)
-            st.success(f"✅ Batch inference complete! Predictions saved to: {resp.get('predictions_path')}")
-            samp = resp.get("sample") or []
-            if samp:
-                st.caption("Sample predictions")
-                st.dataframe(pd.DataFrame(samp), use_container_width=True)
-        except Exception as e:
-            st.error(f"Inference error: {e}")
 else:
     st.info("Train a model to enable inference.")
 

@@ -26,10 +26,10 @@ trap 'err "Aborted at $BASH_SOURCE:$LINENO ($BASH_COMMAND)"' ERR
 # =========================================
 
 # ---- Config (env-overridable)
-UI_IMAGE_TAG="${UI_IMAGE_TAG:-ui:1.2.6}"
+UI_IMAGE_TAG="${UI_IMAGE_TAG:-ui:1.2.7}"
 DP_IMAGE_TAG="${DP_IMAGE_TAG:-data-preprocessing:2.0.0}"
 MT_IMAGE_TAG="${MT_IMAGE_TAG:-model-training:1.0.2}"
-MI_IMAGE_TAG="${MI_IMAGE_TAG:-model-inference:1.0.1}"
+MI_IMAGE_TAG="${MI_IMAGE_TAG:-model-inference:1.0.5}"
 
 NAMESPACE="${NAMESPACE:-hospital-ml}"
 UI_DOMAIN="${UI_DOMAIN:-ui.localtest.me}"
@@ -76,20 +76,36 @@ kubectl_safe_apply_dir() { # apply if dir exists
   local p="$1"; [[ -d "$p" ]] && ns apply -f "$p" || true
 }
 
+# build_images() {
+#   log "Building images… (BUILD_IN_MINIKUBE=${BUILD_IN_MINIKUBE})"
+#   if [[ "${BUILD_IN_MINIKUBE}" == "true" ]]; then
+#     eval "$(minikube -p minikube docker-env)"
+#   fi
+#   (cd services/data_preprocessing && docker build -t "${DP_IMAGE_TAG}" .)
+#   (cd services/model_training      && docker build -t "${MT_IMAGE_TAG}" .)
+#   (cd services/model_inference     && docker build -t "model-inference:1.0.3" .)
+#   (cd services/ui                  && docker build -t "${UI_IMAGE_TAG}" .)
+
+#   # If not building inside Minikube, load images explicitly
+#   if [[ "${BUILD_IN_MINIKUBE}" != "true" ]]; then
+#     log "Loading images into Minikube cache…"
+#     minikube image load "${DP_IMAGE_TAG}" "${MT_IMAGE_TAG}" "model-inference:1.0.3" "${UI_IMAGE_TAG}"
+#   fi
+# }
+
 build_images() {
-  log "Building images… (BUILD_IN_MINIKUBE=${BUILD_IN_MINIKUBE})"
+  echo "[INFO] Building images… (BUILD_IN_MINIKUBE=${BUILD_IN_MINIKUBE})"
   if [[ "${BUILD_IN_MINIKUBE}" == "true" ]]; then
     eval "$(minikube -p minikube docker-env)"
   fi
   (cd services/data_preprocessing && docker build -t "${DP_IMAGE_TAG}" .)
   (cd services/model_training      && docker build -t "${MT_IMAGE_TAG}" .)
-  (cd services/model_inference     && docker build -t "${MI_IMAGE_TAG}" .)
+  (cd services/model_inference     && docker build -t "${MI_IMAGE_TAG}" .)     # <-- CHANGED
   (cd services/ui                  && docker build -t "${UI_IMAGE_TAG}" .)
 
-  # If not building inside Minikube, load images explicitly
   if [[ "${BUILD_IN_MINIKUBE}" != "true" ]]; then
-    log "Loading images into Minikube cache…"
-    minikube image load "${DP_IMAGE_TAG}" "${MT_IMAGE_TAG}" "${MI_IMAGE_TAG}" "${UI_IMAGE_TAG}"
+    echo "[INFO] Loading images into Minikube cache…"
+    minikube image load "${DP_IMAGE_TAG}" "${MT_IMAGE_TAG}" "${MI_IMAGE_TAG}" "${UI_IMAGE_TAG}"  # <-- CHANGED
   fi
 }
 
@@ -111,12 +127,20 @@ apply_manifests() {
   kubectl_safe_apply_dir k8s/services/ui/
 }
 
+# set_images() {
+#   log "Setting deployment images…"
+#   ns set image deploy/data-preprocessing api="${DP_IMAGE_TAG}" || true
+#   ns set image deploy/model-training   api="${MT_IMAGE_TAG}" || true
+#   ns set image deploy/model-inference  api="model-inference:1.0.3" || true
+#   ns set image deploy/ui              ui="${UI_IMAGE_TAG}"  || true
+# }
+
 set_images() {
-  log "Setting deployment images…"
+  echo "[INFO] Setting deployment images…"
   ns set image deploy/data-preprocessing api="${DP_IMAGE_TAG}" || true
-  ns set image deploy/model-training   api="${MT_IMAGE_TAG}" || true
-  ns set image deploy/model-inference  api="${MI_IMAGE_TAG}" || true
-  ns set image deploy/ui              ui="${UI_IMAGE_TAG}"  || true
+  ns set image deploy/model-training   api="${MT_IMAGE_TAG}"    || true
+  ns set image deploy/model-inference  api="${MI_IMAGE_TAG}"    || true   # <-- CHANGED
+  ns set image deploy/ui               ui="${UI_IMAGE_TAG}"     || true
 }
 
 pvc_perms_fix() {
