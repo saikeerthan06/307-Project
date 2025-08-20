@@ -128,13 +128,14 @@ The modules that we have split into are:
         - Only allows authorized services (UI, training) to connect.
 
     #### Workflow Summary:
-    ```mermaid
-    flowchart TD
-        A[Raw dataset (CSV/JSON) ingested by preprocessing service] --> B[Data cleaned, normalized, and encoded]
-        B --> C[Transformed dataset delivered to Model Training]
-        B --> D[Transformed dataset available for Model Inference on-demand]
-        C & D --> E[Kubernetes ensures fault tolerance, autoscaling, and secure communication via HPA, PDB, and NetworkPolicies]
-    ```
+```mermaid
+flowchart TD
+    A[Raw dataset (CSV or JSON) ingested] --> B[Clean, normalize, encode]
+    B --> C[Deliver to Model Training]
+    B --> D[Available to Model Inference (on demand)]
+    C --> E[Kubernetes: fault tolerance, autoscaling, secure comms]
+    D --> E[Kubernetes: fault tolerance, autoscaling, secure comms]
+```
 3. ### Model Training:
 4. ### Model Inference: 
 
