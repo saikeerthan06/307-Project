@@ -62,9 +62,6 @@ The modules that we have split into are:
 
     #### CORE COMPONENTS:
 
-    
-
-
     ##### Python Files:
     1. **app.py**:
         - Serves as the main entry point to the UI Service.
@@ -74,7 +71,70 @@ The modules that we have split into are:
         - Acts as a connector between UI & Model Inference Service 
         - Sends requests to the model-inference-svc and retrieves predictions of the model. 
 
+    ##### Kubernete Manifests (yaml):
+    UI's related manifests are located under `k8s/services/ui` except the u-blue and ui-green
+    1. **Deployment.yaml**:
+	    -	Defines the UI pod specification.
+	    -	Includes:
+	    -	Container image (built from the Dockerfile).
+	    -	Resource requests/limits (CPU & memory).
+	    -	Probes (livenessProbe, readinessProbe) for health checks.
+	    -	Environment variables (from ConfigMap).
+	2.	**service.yaml**
+	    -   Exposes the UI pod internally within the Kubernetes cluster.
+	    -	Type: ClusterIP (internal service) or paired with Ingress for external access.
+	    -	Provides stable DNS (ui) so other services (like ingress controller) can reach it.
+	3.	**ingress.yaml**:
+	    -	Handles external access to the UI via HTTP/HTTPS.
+	    -	Routes traffic from outside the cluster to the UI service.
+	    -	Can integrate with an ingress controller (e.g., NGINX) and TLS certificates for HTTPS.
+	4.	**hpa.yaml (Horizontal Pod Autoscaler)**:
+	    -	Ensures scalability of the UI service.
+	    -   Monitors metrics (e.g., CPU usage).
+	    -	Automatically adjusts the number of UI pods between defined min/max replicas.
+	5.	**pdb.yaml (Pod Disruption Budget)**
+	    -	Protects the UI from downtime during voluntary disruptions (node drain, upgrades).
+	    -	Ensures at least one replica of the UI is always available.
+	6.	**configmap.yaml**:
+	    -   Stores configuration data for the UI (API endpoints, environment settings).
+	    -   Keeps configs separate from code so they can be updated without rebuilding the image.
+	7.	**networkpolicy.yaml**:
+	    -	Restricts communication to/from the UI pods.
+	    -	Only allows necessary ingress/egress (to inference service, DNS, etc.).
+	    -	Increases security by isolating pods.
+
 2. ### Data-Preprocessing:
+    - The Data Preprocessing module is responsible for cleaning, transforming, and preparing raw data before it is passed into the ML pipeline. It ensures that the input data conforms to the expected format, handles missing values, applies feature engineering, and outputs processed datasets that can be consumed by the Model Training and Model Inference services.
+
+    ##### Python Files:
+    1. **service.py** (if present):
+        - Main entry point of the preprocessing service.
+        - Loads raw datasets, applies cleaning (handling nulls, scaling, encoding categorical variables).
+        - Prepares transformed data for training/inference pipelines.
+        - May expose an API (Flask/FastAPI) for on-demand preprocessing requests.
+    ##### Kubernetes Manifests (yaml):
+    Preprocessing related manifests are located under `k8s/services/data-preprocessing`
+    1. **deployment.yaml**:
+        - Defines how the preprocessing pods are deployed.
+        - Includes container image, replicas, probes, and environment configs.
+    2. **service.yaml**:
+        - Exposes the preprocessing pod internally in the Kubernetes cluster with a stable DNS (`data-preprocessing`).
+    3. **hpa.yaml (Horizontal Pod Autoscaler)**:
+        - Dynamically scales preprocessing pods based on load (CPU/memory usage).
+    4. **pdb.yaml (Pod Disruption Budget)**:
+        - Ensures that at least one preprocessing pod remains available during voluntary disruptions.
+    5. **networkpolicy.yaml**:
+        - Enforces communication restrictions.
+        - Only allows authorized services (UI, training) to connect.
+
+    #### Workflow Summary:
+    ```mermaid
+    flowchart TD
+        A[Raw dataset (CSV/JSON) ingested by preprocessing service] --> B[Data cleaned, normalized, and encoded]
+        B --> C[Transformed dataset delivered to Model Training]
+        B --> D[Transformed dataset available for Model Inference on-demand]
+        C & D --> E[Kubernetes ensures fault tolerance, autoscaling, and secure communication via HPA, PDB, and NetworkPolicies]
+    ```
 3. ### Model Training:
 4. ### Model Inference: 
 
