@@ -225,12 +225,31 @@ This project leverages several powerful Kubernetes features to ensure the applic
 We've implemented a robust network security model based on the principle of zero-trust.
 
 - **Default Deny for the Entire Namespace**: A namespace-wide `NetworkPolicy` blocks all ingress and egress traffic by default. This establishes a zero-trust baseline, meaning pods cannot communicate with anything unless explicitly permitted.
-* **Allow Only DNS Egress**: A specific policy allows pods to resolve DNS queries through `kube-dns` on TCP/UDP port 53. No other outbound traffic is allowed unless another policy explicitly opens it, keeping egress traffic tightly controlled.
-* **UI Ingress Restricted to the Ingress Controller**: Only traffic from the `ingress-nginx` controller is allowed to reach the UI pods on port `8501`. This prevents direct pod-to-pod access from other services and forces all external traffic to go through the ingress gateway.
-* **UI Egress Restricted to Backend APIs**: UI pods are only permitted to make outbound calls to the internal backend services (`data-preprocessing`, `model-training`, `model-inference`) on TCP port `8000`. This minimizes the attack surface and reduces the risk of data exfiltration.
+- **Allow Only DNS Egress**: A specific policy allows pods to resolve DNS queries through `kube-dns` on TCP/UDP port 53. No other outbound traffic is allowed unless another policy explicitly opens it, keeping egress traffic tightly controlled.
+- **UI Ingress Restricted to the Ingress Controller**: Only traffic from the `ingress-nginx` controller is allowed to reach the UI pods on port `8501`. This prevents direct pod-to-pod access from other services and forces all external traffic to go through the ingress gateway.
+- **UI Egress Restricted to Backend APIs**: UI pods are only permitted to make outbound calls to the internal backend services (`data-preprocessing`, `model-training`, `model-inference`) on TCP port `8000`. This minimizes the attack surface and reduces the risk of data exfiltration.
 
 
 2. **CronJob backups:**
+A `CronJob` named `nightly-backup` automates daily backups of critical model artifacts and cleaned data:
+
+- **Schedule:** Runs every day at `02:00` (local cluster time).
+- **Location:** Archives are stored in `/shared/models/artifacts/backups/` as compressed `.tgz` files.
+- **Compression Strategy:** Attempts to use `pigz` (parallel gzip) for speed; falls back to `gzip` if not available.
+- **Contents:** Includes:
+  - `/shared/models` (trained model checkpoints)
+  - `/shared/data/clean` (processed input data)
+- **File Naming:** Timestamped format e.g. `backup-20250820-020000.tgz`
+- **Ownership Fix:** After archiving, permissions are set to UID:GID = `1000:1000` for accessibility.
+
+This ensures model reproducibility and disaster recovery support without requiring external storage configuration.
+
+3. **UI Blue/Green Deployments:**
+The UI supports **zero-downtime upgrades** through a **Blue/Green Deployment Strategy**:
+
+- **Two Deployments:** `ui-blue` and `ui-green`, both with identical container specs and health probes.
+- **Traffic Switching:** A simple `kubectl patch` on the UI Service's selector changes traffic routing between versions:
+
 3. **Ui Blue/Green**:
 4. **Rollout Ctl**:
 5. **HPA**:
