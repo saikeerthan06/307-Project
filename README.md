@@ -344,6 +344,11 @@ Below is a summary of all the custom shell scripts used to orchestrate, automate
   - Switches the UI service selector to route traffic to the desired color (blue/green).
   - Enables seamless traffic switching during deployment rollouts with zero downtime.
 
+```bash
+chmod +x scripts/bluegreen-setup.sh
+./scripts/bluegreen-setup.sh
+```
+
 
 
 ### 2. `rollout-ctl.sh`
@@ -353,6 +358,11 @@ Below is a summary of all the custom shell scripts used to orchestrate, automate
   - Enables image updates using `kubectl set image`.
   - Supports pausing, resuming, and undoing rollouts.
   - Helps debug and manage live deployment updates effectively.
+
+```bash
+chmod +x scripts/rollout-ctl.sh
+./scripts/rollout-ctl.sh
+```
 
 
 
@@ -364,6 +374,11 @@ Below is a summary of all the custom shell scripts used to orchestrate, automate
   - Applies essential security configurations via network policies.
   - Initiates backup CronJob setup.
 
+```bash
+chmod +x scripts/extra_features.sh
+./scripts/extra_features.sh
+```
+
 
 
 ### 4. `netpol-apply.sh`
@@ -374,6 +389,11 @@ Below is a summary of all the custom shell scripts used to orchestrate, automate
   - Applies `ui-allow-egress-to-backends` for communication from UI to internal services.
   - Applies `ui-allow-from-ingress-nginx` for traffic from the Ingress Controller.
 
+```bash
+chmod +x scripts/netpol-apply.sh
+./scripts/netpol-apply.sh
+```
+
 
 
 ### 5. `backup-tools.sh`
@@ -382,6 +402,10 @@ Below is a summary of all the custom shell scripts used to orchestrate, automate
   - Can manually trigger the CronJob to create a backup of mounted volumes.
   - Useful for quick on-demand backups without waiting for scheduled triggers.
 
+```bash
+chmod +x scripts/backup-tools.sh
+./scripts/backup-tools.sh
+```
 
 You should see the following to deem that the extra features have been added successfully: 
 
