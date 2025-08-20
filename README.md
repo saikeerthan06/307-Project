@@ -249,9 +249,157 @@ The UI supports **zero-downtime upgrades** through a **Blue/Green Deployment Str
 
 - **Two Deployments:** `ui-blue` and `ui-green`, both with identical container specs and health probes.
 - **Traffic Switching:** A simple `kubectl patch` on the UI Service's selector changes traffic routing between versions:
+---
 
-3. **Ui Blue/Green**:
-4. **Rollout Ctl**:
-5. **HPA**:
+4. **Rollout Controls (rollout-ctl.sh):**
+
+The project includes a custom utility script: `scripts/rollout-ctl.sh`, which simplifies safe deployment and version rollback operations on Kubernetes Deployments.
+
+**Supported commands:**
+- `status` → View current rollout status
+- `history` → List previous rollout revisions
+- `pause` → Temporarily halt automated rollouts (manual control)
+- `resume` → Resume automated rollout behavior
+- `undo` → Rollback to the previous successful revision
+- `set-image` → Update container image directly without modifying the YAML
+
+ **Example Usage**:
+```bash
+bash scripts/rollout-ctl.sh hospital-ml model-training status
+bash scripts/rollout-ctl.sh hospital-ml model-inference undo
+bash scripts/rollout-ctl.sh hospital-ml ui set-image model-inference=model-inference:1.1.0
+```
+
+5. **Horizontal Pod Autoscaler (HPA):**
+
+The HPA mechanism ensures services automatically scale up or down based on load, improving both performance and resource efficiency.
+minReplicas: 2 and maxReplicas: 5 = Kubernetes keeps between 2 and 5 pods running.
+When average CPU usage across pods exceeds 60%, the HPA spins up more pods.
+When usage drops, pods are scaled down automatically.
+-	This behavior applies to all core services in this project:
+1.	UI
+2.	Data Preprocessing
+3.	Model Training
+4.	Model Inference
 
 
+---
+
+## Executing Kubernetes
+
+Executing the Kubernetes Cluster has been much simplified, eroding you of the need to consistently key in docker command through the usage of `.sh` scripts. 
+
+**! make sure you are running in root**
+To activate the Kubernetes Cluster, open up 
+```bash
+chmod +x automation.sh
+./automation.sh # or bash automation.sh
+```
+
+A bunch of processes will be run in the terminal, including:
+- **Purpose:** Master automation script to handle end-to-end project lifecycle.
+- **What it does:**
+  - Cleans up existing Kubernetes resources.
+  - Rebuilds Docker images for each module.
+  - Pushes images to Docker Hub (if configured).
+  - Applies all Kubernetes manifests (UI, Preprocessing, Training, Inference).
+  - Applies Horizontal Pod Autoscalers (HPA).
+  - Applies Persistent Volume Claims.
+  - Applies Services, Deployments, PDBs, Network Policies, and CronJobs.
+  - Ideal for resetting or fresh launching the entire stack.
+
+You should see something like this at the end of a successful Kubernetes deployment: 
+```bash
+==============================================
+✅ Deploy complete!
+UI: http://localhost:8501
+DP: data-preprocessing-svc:8000
+MT: model-training-svc:8000
+MI: model-inference-svc:8000
+==============================================
+```
+
+- You can access the UI through the UI link, which is `http://localhost:8501`. Inside the UI is where you can interact by inputting your csv, running pre-processing, train your model and then input manual data for model inference.
+
+- Currently the port is only able to be run locally, but if you want it to be accessed on other devices, you can use Visual Studio's code Port Forward (Located beside the terminal). 
+    1. Key in "8501" as the localhost port, and you will be given an address...
+    2. Right click on it to make it public
+    3. Copy the link into another device without docker installed (iPad | iPhone)
+    4. It will still be able to undergo data-preprocessing, Model training & model inference. 
+- The above ability further defines as to why Docker & Kubernetes are of crucial importance, as they allow anyone, on any device to run any piece of code with ease. 
+
+### Extra Features 
+
+To run the extra features, their bash scripts can be found in `scripts/` folder, with each extra feature getting their own bash script. 
+
+Below is a summary of all the custom shell scripts used to orchestrate, automate, and enhance Kubernetes deployment workflows in this project.
+
+
+
+### 1 `bluegreen-setup.sh`
+- **Purpose:** Implements Blue-Green Deployment strategy for the UI service.
+- **What it does:**
+  - Ensures both `ui-blue` and `ui-green` deployments exist.
+  - Verifies readiness probes and deployment status.
+  - Switches the UI service selector to route traffic to the desired color (blue/green).
+  - Enables seamless traffic switching during deployment rollouts with zero downtime.
+
+
+
+### 2. `rollout-ctl.sh`
+- **Purpose:** Provides command-line control over Kubernetes rollout operations.
+- **What it does:**
+  - Allows inspecting rollout status and history.
+  - Enables image updates using `kubectl set image`.
+  - Supports pausing, resuming, and undoing rollouts.
+  - Helps debug and manage live deployment updates effectively.
+
+
+
+### 3. `extra_features.sh`
+- **Purpose:** A supplementary script to apply bonus features not handled by automation.
+- **What it does:**
+  - Applies UI blue-green setup.
+  - Calls `rollout-ctl.sh` for inspecting rollout history.
+  - Applies essential security configurations via network policies.
+  - Initiates backup CronJob setup.
+
+
+
+### 4. `netpol-apply.sh`
+- **Purpose:** Central script for enforcing Kubernetes Network Policies.
+- **What it does:**
+  - Applies `default-deny-all` policy to restrict all traffic by default.
+  - Applies DNS egress policy to allow pod-level DNS resolution.
+  - Applies `ui-allow-egress-to-backends` for communication from UI to internal services.
+  - Applies `ui-allow-from-ingress-nginx` for traffic from the Ingress Controller.
+
+
+
+### 5. `backup-tools.sh`
+- **Purpose:** Utility for interacting with backup-related resources.
+- **What it does:**
+  - Can manually trigger the CronJob to create a backup of mounted volumes.
+  - Useful for quick on-demand backups without waiting for scheduled triggers.
+
+
+You should see the following to deem that the extra features have been added successfully: 
+
+```bash
+==> Listing backups on PVC via pod data-preprocessing-57d6f6489f-lm6p6
+Defaulted container "api" out of: api, init-perms (init)
+total 13G
+-rw-rw-r-- 1 appuser appuser  90M Aug 19 22:29 backup-20250819-222905.tgz
+-rw-rw-r-- 1 appuser appuser 184M Aug 19 22:45 backup-20250819-224533.tgz
+-rw-rw-r-- 1 appuser appuser 376M Aug 20 01:59 backup-20250820-015851.tgz
+-rw-rw-r-- 1 appuser appuser 752M Aug 20 02:00 backup-20250820-020000.tgz
+-rw-rw-r-- 1 appuser appuser 1.5G Aug 20 03:38 backup-20250820-033720.tgz
+-rw-rw-r-- 1 appuser appuser 3.0G Aug 20 05:49 backup-20250820-054722.tgz
+-rw-rw-r-- 1 appuser appuser 6.0G Aug 20 06:35 backup-20250820-063054.tgz
+-rw-rw-r-- 1 appuser appuser 127M Aug 20 06:45 backup-20250820-064510.tgz
+-rw-r--r-- 1 appuser appuser 130M Aug 20 07:17 backup-20250820-071723.tgz
+-rw-r--r-- 1 appuser appuser 133M Aug 20 07:33 backup-20250820-073314.tgz
+All extra features applied successfully!
+```
+
+---
