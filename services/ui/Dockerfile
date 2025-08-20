@@ -19,3 +19,6 @@ ENV INFER_URL="http://model-inference:8000"
 ENV RAW_DIR="/shared/data/raw" CLEAN_DIR="/shared/data/clean" MODEL_DIR="/shared/models"
 
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+
+# --server.address=0.0.0.0: so the app listens on all interfaces inside the container, allowing the Pod/Service to route traffic to it.
+# ENV PYTHONUNBUFFERED=1: To see logs immediately with kubectl logs, which helps with debugging and readiness during demos.
