@@ -33,7 +33,17 @@ spec:
                   set -e
                   TS=$(date +%Y%m%d-%H%M%S)
                   mkdir -p /shared/models/artifacts/backups
-                  tar czf /shared/models/artifacts/backups/backup-$TS.tgz -C /shared models data/clean || true
+                  # Fast path if pigz is present; else fall back to gzip
+                  if command -v pigz >/dev/null 2>&1; then
+                    tar -I pigz -cf /tmp/backup-$TS.tgz \
+                      -C /shared models data/clean \
+                      --exclude 'models/artifacts/backups/*.tgz'
+                  else
+                    GZIP=-1 tar -czf /tmp/backup-$TS.tgz \
+                      -C /shared models data/clean \
+                      --exclude 'models/artifacts/backups/*.tgz'
+                  fi
+                  mv /tmp/backup-$TS.tgz /shared/models/artifacts/backups/
                   chown 1000:1000 /shared/models/artifacts/backups/backup-$TS.tgz || true
                   echo "Backup written to /shared/models/artifacts/backups/backup-$TS.tgz"
               volumeMounts:

@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------------
+# NetworkPolicy to secure data-preprocessing pods.
+# Allows ingress only from UI pods on port 8000 
+# and egress only for DNS lookups.
+# -----------------------------------------------------------------------------
+
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -36,8 +42,3 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # (Optional) Allow intra-namespace traffic if you later chain services
-    # - to:
-    #     - namespaceSelector:
-    #         matchLabels:
-    #           kubernetes.io/metadata.name: hospital-ml

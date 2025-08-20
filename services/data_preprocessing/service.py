@@ -177,7 +177,6 @@ def _binary_map(values: List[Any]) -> Dict[str, int]:
         return {a: 1, b: 0}
     if b.lower() in positive_tokens and a.lower() not in positive_tokens:
         return {a: 0, b: 1}
-    # Fallback: alphabetical -> {first:0, second:1}
     return {a: 0, b: 1}
 
 
@@ -227,11 +226,12 @@ def _apply_encoding_and_scaling(
 
     # 6) Categorical encoding
     if req.encode_categorical != "none" and cat_cols:
-        # Mixed policy:
+        """Mixed policy:
         #   - One-hot for nominated columns (if present)
         #   - Ordinal for columns listed in ordinal_maps
         #   - Binary (0/1) for 2-level categoricals
         #   - LabelEncoder for remaining categoricals (only if "mixed" or "label_all")
+        """
         remaining = set(cat_cols)
 
         # 6a) One-hot first
@@ -255,12 +255,15 @@ def _apply_encoding_and_scaling(
 
         # 6c) Binary (0/1) for 2-level columns
         if req.encode_categorical in ("mixed", "label_all", "onehot_all"):
+            """
             # In "onehot_all", we already dummied nominated onehot cols; treat others:
             #   - if exactly 2 categories -> 0/1 map (more compact than one-hot)
             #   - else:
             #       * onehot_all -> one-hot the rest
             #       * label_all -> label-encode
             #       * mixed -> label-encode remaining non-binary
+            """
+            
             still = list(remaining)
             for col in still:
                 uniq = [str(v) for v in features[col].dropna().unique().tolist()]

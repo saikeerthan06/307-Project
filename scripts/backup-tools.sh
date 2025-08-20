@@ -38,15 +38,60 @@ case "$CMD" in
     kubectl -n "$NS" get cronjob "$CRON_NAME" -o wide
     ;;
   run-now)
+    # Allow caller to override wait via BACKUP_WAIT_SECS env (default 2700s = 45m)
+    WAIT_SECS="${BACKUP_WAIT_SECS:-2700}"
     ts="$(date +%Y%m%d-%H%M%S)"
     job="backup-now-$ts"
     echo "==> Creating one-off Job from CronJob: $job"
     kubectl -n "$NS" create job "$job" --from=cronjob/$CRON_NAME
+
+    echo "==> Streaming job logs (until completion or timeout ${WAIT_SECS}s)..."
+    # Start log streaming in the background; stop it when we exit this block.
+    kubectl -n "$NS" logs -f "job/$job" --all-containers --since=1s &
+    LOGS_PID=$!
+    trap 'kill $LOGS_PID 2>/dev/null || true' EXIT
+
     echo "==> Waiting for Job to complete..."
-    kubectl -n "$NS" wait --for=condition=complete "job/$job" --timeout=180s || true
-    echo "==> Job logs:"
-    pod=$(kubectl -n "$NS" get pods --selector=job-name="$job" -o jsonpath='{.items[0].metadata.name}')
-    kubectl -n "$NS" logs "$pod" || true
+    if kubectl -n "$NS" wait --for=condition=complete "job/$job" --timeout="${WAIT_SECS}s"; then
+      echo "Job completed successfully."
+    else
+      echo "Timed out or failed waiting for completion. Gathering diagnostics..." >&2
+      # Stop log follow before diagnostics to avoid interleaving
+      kill $LOGS_PID 2>/dev/null || true
+
+      echo "--- Job status (jsonpath) ---"
+      kubectl -n "$NS" get job "$job" -o jsonpath='{.status}' || true
+      echo
+
+      echo "--- Pods for this Job ---"
+      kubectl -n "$NS" get pods --selector=job-name="$job" -o wide || true
+
+      echo "--- Describe Job ---"
+      kubectl -n "$NS" describe job "$job" || true
+
+      echo "--- Last pod logs (if any) ---"
+      pod=$(kubectl -n "$NS" get pods --selector=job-name="$job" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+      if [[ -n "${pod:-}" ]]; then
+        kubectl -n "$NS" logs "$pod" || true
+      fi
+
+      # Check if it actually succeeded after our wait (slow jobs can finish a bit later)
+      succ=$(kubectl -n "$NS" get job "$job" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)
+      if [[ "${succ:-0}" != "1" ]]; then
+        echo "Job did not report success within ${WAIT_SECS}s." >&2
+        exit 1
+      fi
+    fi
+
+    # Stop log follower if still running
+    kill $LOGS_PID 2>/dev/null || true
+    trap - EXIT
+
+    echo "==> Job logs (final):"
+    pod=$(kubectl -n "$NS" get pods --selector=job-name="$job" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    if [[ -n "${pod:-}" ]]; then
+      kubectl -n "$NS" logs "$pod" || true
+    fi
     ;;
   list)
     POD="$(first_shared_pod || true)"
@@ -56,7 +101,7 @@ case "$CMD" in
     ;;
   jobs)
     kubectl -n "$NS" get cronjob "$CRON_NAME" -o wide || true
-    kubectl -n "$NS" get jobs -l job-name -o wide || true
+    kubectl -n "$NS" get jobs -o custom-columns=NAME:.metadata.name,COMPLETIONS:.status.succeeded,ACTIVE:.status.active,FAILED:.status.failed,AGE:.metadata.creationTimestamp --sort-by=.metadata.creationTimestamp || true
     ;;
   restore)
     FILE="${1:-}"; shift || true

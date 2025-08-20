@@ -21,7 +21,7 @@ POST /train
         "n_jobs": 0
       },
       "early_stopping_rounds": 20,
-      "save_as": "xgb_model.joblib",   # optional; auto-named if omitted
+      "save_as": "xgb_model.joblib",  
       "persist_metrics": true
     }
 

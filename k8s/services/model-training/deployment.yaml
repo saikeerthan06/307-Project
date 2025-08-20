@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------------
+# Deployment for the model-training service.
+# Ensures 2 replicas with rolling updates, resource limits, 
+# readiness/liveness probes, and shared volume mounts for persistence.
+# -----------------------------------------------------------------------------
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:

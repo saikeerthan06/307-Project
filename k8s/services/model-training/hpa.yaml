@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+# HorizontalPodAutoscaler for the model-training Deployment.
+# Automatically scales pods between 2 and 5 replicas 
+# based on CPU utilization (target: 70%).
+# -----------------------------------------------------------------------------
+
+
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

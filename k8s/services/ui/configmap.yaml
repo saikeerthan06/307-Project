@@ -1,3 +1,7 @@
+# -----------------------------------------------------------------------------
+# This file defines the ConfigMap for the UI.
+# It stores backend service URLs and shared directory paths used by the application.
+# -----------------------------------------------------------------------------
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------------
+# PodDisruptionBudget for the model-inference pods.
+# Ensures at least 1 pod is always available 
+# during voluntary disruptions (e.g., upgrades, maintenance).
+# -----------------------------------------------------------------------------
+
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

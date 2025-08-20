@@ -196,7 +196,7 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
         for col, mapping in enc.get("binary", {}).items():
             schema["fields"].append({"name": col, "kind":"select", "options": list(mapping.keys())})
             existing.add(col)
-        # Ordinal
+        # Ordinal Encoding
         for col, info in enc.get("ordinal", {}).items():
             ordered = info.get("ordered")
             if not ordered:
@@ -204,7 +204,7 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
                 ordered = [k for k,_ in sorted(mp.items(), key=lambda kv: kv[1])]
             schema["fields"].append({"name": col, "kind":"select", "options": ordered or []})
             existing.add(col)
-        # Onehot (single select)
+        # Onehot Encoding
         for col, info in enc.get("onehot", {}).items():
             cats = info.get("categories", [])
             schema["fields"].append({"name": col, "kind":"select", "options": cats})
@@ -214,7 +214,7 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
             classes = [str(x) for x in info.get("classes", [])]
             schema["fields"].append({"name": col, "kind":"select", "options": classes})
             existing.add(col)
-        # Add numeric from meta if present
+
         numeric_added = False
         for col in meta.get("num_cols", []):
             if col != tgt and col not in existing:
@@ -222,8 +222,6 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
                 existing.add(col)
                 numeric_added = True
 
-        # If we only had categorical encoders and meta lacks num_cols,
-        # augment with numerics inferred from the cleaned CSV sample
         if not numeric_added and cleaned_csv and cleaned_csv.exists():
             try:
                 _df = pd.read_csv(cleaned_csv, nrows=2000)
@@ -243,7 +241,6 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
             except Exception:
                 pass
 
-        # If we have any fields at this point, return the schema
         if schema["fields"]:
             return schema
 
@@ -262,7 +259,7 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
             # Use dtypes & values to pick widgets
             for col in feats:
                 if col not in sample_df.columns:
-                    # if not in CSV (possible in some flows), fall back to text
+                    
                     schema["fields"].append({"name": col, "kind":"text"})
                     continue
                 s = sample_df[col]
@@ -282,7 +279,7 @@ def build_feature_schema(enc:Dict[str,Any], meta:Dict[str,Any], cleaned_csv:Opti
             schema["source"] = "meta+csv"
             return schema
         else:
-            # No CSV — render all as text so the form never disappears
+           
             for col in feats:
                 schema["fields"].append({"name": col, "kind":"text"})
             schema["source"] = "meta"
@@ -497,19 +494,6 @@ if st.session_state.model_ready:
         st.caption("No artifacts/CSV available; form will be minimal.")
 
     with st.form("manual_inference_form", clear_on_submit=False):
-        # rec: Dict[str,Any] = {}
-        # for fld in schema["fields"]:
-        #     name = fld["name"]; kind = fld["kind"]
-        #     if kind == "numeric":
-        #         rec[name] = st.number_input(name, key=f"num_{name}")
-        #     elif kind == "checkbox":
-        #         rec[name] = st.checkbox(name, key=f"chk_{name}", value=False)
-        #     elif kind == "select":
-        #         options = fld.get("options", [])
-        #         rec[name] = st.selectbox(name, options, key=f"sel_{name}") if options else st.text_input(name, key=f"txt_{name}")
-        #     else:  # text
-        #         rec[name] = st.text_input(name, key=f"txt_{name}", help=fld.get("hint"))
-        # submitted = st.form_submit_button("Run inference (manual)")
         rec: Dict[str, Any] = {}
         for fld in schema["fields"]:
             name = fld["name"]; kind = fld["kind"]
@@ -551,7 +535,7 @@ if st.session_state.model_ready:
 else:
     st.info("Train a model to enable inference.")
 
-# --- 5) artifacts & downloads ---
+
 st.header("5) Artifacts")
 cols = st.columns(4)
 with cols[0]:

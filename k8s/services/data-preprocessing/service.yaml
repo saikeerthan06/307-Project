@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------------
+# Service (ClusterIP) for the data-preprocessing pods.
+# Provides stable internal access on port 8000 
+# by load-balancing traffic across all healthy pods.
+# -----------------------------------------------------------------------------
+
 apiVersion: v1
 kind: Service
 metadata:
