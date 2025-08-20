@@ -127,16 +127,112 @@ The modules that we have split into are:
         - Enforces communication restrictions.
         - Only allows authorized services (UI, training) to connect.
 
-    #### Workflow Summary:
-```mermaid
-flowchart TD
-    A[Raw dataset (CSV or JSON) ingested] --> B[Clean, normalize, encode]
-    B --> C[Deliver to Model Training]
-    B --> D[Available to Model Inference (on demand)]
-    C --> E[Kubernetes: fault tolerance, autoscaling, secure comms]
-    D --> E[Kubernetes: fault tolerance, autoscaling, secure comms]
-```
 3. ### Model Training:
+   - The **Model Training** module orchestrates supervised learning over the cleaned dataset to produce a versioned model artifact shared with the rest of the system. It is designed for reliability (probes, PDB), scalability (HPA), and security (NetworkPolicies) in Kubernetes.
+
+    #### CORE COMPONENTS
+       
+    ##### Python Files
+    1. **service.py**
+        - Exposes an HTTP API (e.g., `/healthz`, `/train`) to trigger/monitor training runs.
+        - Loads configuration from environment variables (see below) and coordinates a training job.
+        - Writes metrics/logs to stdout (collected by `kubectl logs`) and persists artifacts to the shared volume.
+    2. **train.py**
+        - Implements the actual training loop (data loading, train/val split, model fit, metric computation).
+        - Saves the best model and any supporting artifacts (e.g., label encoders, scalers) into `${MODEL_DIR}`.
+    ##### Environment Variables (from Deployment)
+    - `RAW_DIR` → path to raw data mounted from the shared PVC (e.g., `/shared/data/raw`).
+    - `CLEAN_DIR` → path to cleaned/processed data (e.g., `/shared/data/clean`).
+    - `MODEL_DIR` → path where trained models and artifacts are stored (e.g., `/shared/models`).
+    ##### Docker & Dependencies
+    - **Dockerfile** (in `services/model_training/`):
+        - Uses a Python base image, installs `requirements.txt`, copies source code, sets an entrypoint (e.g., `uvicorn service:app` or `python service.py`).
+    - **requirements.txt**:
+        - Typical packages: `pandas`, `numpy`, `scikit-learn` (or framework-specific libs), `joblib`/`pickle`, and a web framework (`fastapi`/`flask`) plus `uvicorn` if applicable.
+
+    #### KUBERNETES MANIFESTS (Model Training)
+    All manifests reside under `k8s/services/model-training/`.
+    - **deployment.yaml**
+    - Runs the `model-training` pods with a non-root security context and an init container that prepares permissions on the shared PVC.
+    - Mounts the shared volume at `/shared` and sets `RAW_DIR`, `CLEAN_DIR`, `MODEL_DIR`.
+    - Defines resource requests/limits and HTTP health probes on `/healthz` (port `http`).
+    - **service.yaml**
+        - ClusterIP service exposing port `8000` (named `http`) to load-balance across healthy training pods.
+    - **hpa.yaml** (Horizontal Pod Autoscaler)
+        - Scales pods between a minimum and maximum replica count based on CPU utilization (target ~70%).
+    - **pdb.yaml** (Pod Disruption Budget)
+        - Ensures at least one training pod remains available during voluntary disruptions.
+    - **networkpolicy.yaml**
+        - Allows ingress only from the UI (and optionally a retrain CronJob) to port `8000`.
+        - Egress is restricted to DNS (TCP/UDP 53) for name resolution.
+    #### API ENDPOINTS (Typical)
+    - `GET /healthz` → returns 200 OK when the training service is healthy.
+    - `POST /train` → triggers a new training run; responds with status/metadata of the run.
 4. ### Model Inference: 
+   The **Model Inference** module serves real-time predictions by loading the latest trained model artifact from the shared storage. It is optimized for low-latency responses, high availability, and secure interaction with the UI service.
+
+   #### CORE COMPONENTS
+
+   ##### Python Files
+   1. **service.py**
+      - Exposes HTTP endpoints for health checks (`/healthz`) and predictions (`/predict`).
+      - Loads the trained model and preprocessing artifacts from `${MODEL_DIR}`.
+      - Handles requests from the UI, applies preprocessing, performs inference, and returns predictions.
+
+   ##### Environment Variables (from Deployment)
+   - `RAW_DIR` → path to raw input data (if required).
+   - `CLEAN_DIR` → path to cleaned/processed input data.
+   - `MODEL_DIR` → location of trained models mounted from the shared PVC.
+
+   ##### Docker & Dependencies
+   - **Dockerfile** (in `services/model_inference/`):
+     - Based on a Python base image.
+     - Installs requirements (`fastapi`/`flask`, `uvicorn`, `numpy`, `pandas`, ML libraries like `scikit-learn` or `torch`).
+     - Copies `service.py` and sets the container entrypoint.
+   - **requirements.txt**:
+     - Web framework + ML dependencies to support serving predictions.
+
+   #### KUBERNETES MANIFESTS (Model Inference)
+
+   - **deployment.yaml**
+     - Runs 2 replicas by default with rolling updates .
+     - Uses init containers to prepare `/shared` directories and set permissions .
+     - Mounts shared volume for accessing data and models .
+     - Configures readiness & liveness probes on `/healthz` .
+   - **service.yaml**
+     - Defines a ClusterIP service on port 8000 to load-balance traffic across inference pods.
+   - **hpa.yaml**
+     - Auto-scales between 2 and 6 replicas based on CPU utilization (target 70%).
+   - **pdb.yaml**
+     - Ensures at least 1 replica is always running during voluntary disruptions.
+   - **networkpolicy.yaml**
+     - Allows ingress traffic only from the UI pods on port 8000.
+     - Restricts egress to DNS lookups only 
+
+### Extra Features:
+
+This project features a wide range of extra features, all in with scalability, robustness, flexibility and high availability in mind. The Extra features kept in place are: 
+
+1. **Network**:
+## Key Kubernetes Features Implemented
+
+This project leverages several powerful Kubernetes features to ensure the application is secure, scalable, and resilient.
+
+---
+
+### 1. Network Security (Zero-Trust by Default)
+
+We've implemented a robust network security model based on the principle of zero-trust.
+
+- **Default Deny for the Entire Namespace**: A namespace-wide `NetworkPolicy` blocks all ingress and egress traffic by default. This establishes a zero-trust baseline, meaning pods cannot communicate with anything unless explicitly permitted.
+* **Allow Only DNS Egress**: A specific policy allows pods to resolve DNS queries through `kube-dns` on TCP/UDP port 53. No other outbound traffic is allowed unless another policy explicitly opens it, keeping egress traffic tightly controlled.
+* **UI Ingress Restricted to the Ingress Controller**: Only traffic from the `ingress-nginx` controller is allowed to reach the UI pods on port `8501`. This prevents direct pod-to-pod access from other services and forces all external traffic to go through the ingress gateway.
+* **UI Egress Restricted to Backend APIs**: UI pods are only permitted to make outbound calls to the internal backend services (`data-preprocessing`, `model-training`, `model-inference`) on TCP port `8000`. This minimizes the attack surface and reduces the risk of data exfiltration.
+
+
+2. **CronJob backups:**
+3. **Ui Blue/Green**:
+4. **Rollout Ctl**:
+5. **HPA**:
 
 
